@@ -1,0 +1,13 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>lets-karaoke · 本地影音工作台</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#0d1117;color:#e6edf3;font:14px "Segoe UI","Microsoft YaHei",sans-serif}nav{height:60px;display:flex;align-items:center;gap:10px;padding:0 20px;border-bottom:1px solid #30363d;background:#161b22}strong{margin-right:20px;letter-spacing:.5px}button{font:inherit;color:#8b949e;background:transparent;border:1px solid transparent;padding:10px 18px;border-radius:8px;cursor:pointer}button[aria-selected=true]{color:#fff;background:#1f6feb;border-color:#388bfd}button:focus-visible{outline:2px solid #58a6ff}iframe{width:100%;height:calc(100dvh - 60px);border:0;display:block}iframe[hidden]{display:none}small{margin-left:auto;color:#8b949e}@media(max-width:600px){nav{padding:0 8px;gap:3px}strong{margin-right:3px;font-size:12px}button{padding:10px}small{display:none}}
+</style></head><body>
+<nav role="tablist" aria-label="工作台功能"><strong>lets-karaoke</strong><button id="tab-karaoke" role="tab" aria-selected="true" aria-controls="panel-karaoke">卡拉OK 字幕</button><button id="tab-concert" role="tab" aria-selected="false" aria-controls="panel-concert" tabindex="-1">演唱会切割</button><small>本地影音工作台</small></nav>
+<iframe id="panel-karaoke" role="tabpanel" aria-labelledby="tab-karaoke" title="卡拉OK 字幕工坊" src="/karaoke"></iframe>
+<iframe id="panel-concert" role="tabpanel" aria-labelledby="tab-concert" title="演唱会切割" hidden></iframe>
+<script>
+function selectTab(name){for(const n of ['karaoke','concert']){const on=n===name,b=document.getElementById('tab-'+n),p=document.getElementById('panel-'+n);b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;p.hidden=!on;if(on&&!p.getAttribute('src'))p.src='/'+n;}history.replaceState(null,'','#'+name);}
+for(const n of ['karaoke','concert']){const b=document.getElementById('tab-'+n);b.onclick=()=>selectTab(n);b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=e.key==='Home'?'karaoke':e.key==='End'?'concert':n==='karaoke'?'concert':'karaoke';selectTab(target);document.getElementById('tab-'+target).focus();}};}
+selectTab(location.hash==='#concert'?'concert':'karaoke');
+</script></body></html>

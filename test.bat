@@ -12,7 +12,8 @@ python -m unittest ^
   tests.anchor_history_test ^
   tests.history_delete_test ^
   tests.restyle_versions_test ^
-  tests.webui_policy_test
+  tests.webui_policy_test ^
+  tests.concert_splitter_test
 if errorlevel 1 exit /b 1
 
 echo Release unit tests passed.

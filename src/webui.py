@@ -914,9 +914,16 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         try:
+            if u.path.startswith('/api/concert/') or u.path.startswith('/concert-files/'):
+                from concert_web import dispatch_get
+                return dispatch_get(self, u.path, q)
             if u.path in ("/", "/index.html"):
-                p = ASSETS / "index.html"
+                p = ASSETS / "workspace.html"
                 return self._send(200, "text/html; charset=utf-8", p.read_bytes())
+            if u.path in ('/karaoke', '/concert', '/concert.js', '/concert.css'):
+                name = {'/karaoke': 'index.html', '/concert': 'concert.html'}.get(u.path, u.path[1:])
+                ctype = 'text/javascript' if name.endswith('.js') else 'text/css' if name.endswith('.css') else 'text/html'
+                return self._send(200, ctype + '; charset=utf-8', (ASSETS / name).read_bytes())
             if u.path == "/api/meta":
                 return self._json({
                     "fonts": [n for f, n in FONT_CANDIDATES if Path(f).exists()],
@@ -959,6 +966,9 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         try:
+            if u.path.startswith('/api/concert/'):
+                from concert_web import dispatch_post
+                return dispatch_post(self, u.path)
             if u.path == "/api/run":
                 return self._api_run()
             if u.path == "/api/rerender":

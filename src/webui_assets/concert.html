@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>演唱会切割 · lets-karaoke</title><link rel="stylesheet" href="/concert.css"><script defer src="/concert.js"></script></head>
+<body><header><div><span class="eyebrow">CONCERT STUDIO</span><h1>把整场演出，整理成单曲片段</h1><p>本地分析 · 边界试听 · 批量导出</p></div><span class="tag">原文件保留</span></header>
+<main><aside>
+<section class="card"><h2>01 / 选择视频</h2><label for="source">本地视频完整路径</label><input id="source" type="text" placeholder="D:\Videos\concert.mp4"><p class="hint">直接读取磁盘文件，无需上传。支持数小时的大视频。</p>
+<div class="row"><div><label for="minimum">最短候选片段（秒）</label><input id="minimum" type="number" min="30" max="1800" value="120"></div><div><label for="sensitivity">边界灵敏度</label><select id="sensitivity"><option value="conservative">保守 · 较少切点</option><option value="balanced" selected>均衡</option><option value="sensitive">灵敏 · 更多切点</option></select></div></div>
+<button id="analyze" class="primary">分析歌曲边界</button><button id="reanalyze" class="secondary" hidden>按当前灵敏度重新分析此记录</button><p class="hint">依据音量下降与音色结构变化找候选点，不自动识别歌名。讲话、掌声与串烧需要试听复核。</p></section>
+<section class="card"><h2>02 / 处理进度</h2><p id="status" role="status" aria-live="polite">选择视频后开始分析</p><progress id="progress" max="1" value="0"></progress><button id="cancel" hidden>取消当前处理</button><p id="error" role="alert"></p></section>
+<section class="card"><div class="heading"><h2>本地切割记录</h2><button id="refresh" class="small">刷新</button></div><div id="history" class="history">正在读取…</div></section>
+</aside><article>
+<section class="card"><div class="heading"><h2 id="videoTitle">03 / 试听与复核</h2><span class="tag">分析版本 <select id="version" aria-label="分析版本" style="width:auto"><option>—</option></select></span><span id="duration" class="tag">尚未载入</span></div><video id="player" controls preload="metadata"></video>
+<div class="transport"><button id="back">后退 5 秒</button><output id="playTime">00:00:00.000</output><button id="forward">前进 5 秒</button><button id="split">在播放位置拆分</button></div>
+<canvas id="waveform" height="90" tabindex="0" aria-label="整场音量概览；点击定位，拖动蓝线调整边界，双击边界合并片段"></canvas><p class="hint">点击空白处定位；拖动蓝色边界调整时间；双击边界或选中后按 Delete 合并相邻片段。也可以用“在播放位置拆分”。所有操作会立即同步下方时间表。</p></section>
+<section class="card"><div class="heading"><h2>04 / 分段时间表 <span id="count"></span></h2><button id="save">保存调整</button></div>
+<p class="notice" id="notice">自动分段是待复核草稿。可修改名称与时间、取消不需要的片段，或合并误切的相邻片段。</p><div id="reviewNotes" class="hint"></div>
+<div class="tablewrap"><table><thead><tr><th>导出</th><th>片段名称</th><th>开始</th><th>结束</th><th>操作</th></tr></thead><tbody id="segments"><tr><td colspan="5" class="empty">分析完成后，候选分段会显示在这里</td></tr></tbody></table></div>
+<div class="exportbar"><select id="mode" aria-label="导出方式"><option value="copy">快速导出 · 保持原编码（MKV）</option><option value="precise">精确切割 · 重新编码（MP4）</option></select><button id="export" class="primary">导出选中片段</button><a id="manifest" hidden>下载时间表</a></div><p id="modeHelp" class="hint">快速模式不重新压缩，速度快；受视频关键帧限制，开头可能包含切点前的画面。精确模式耗时较长。</p>
+<div id="downloads"></div></section>
+</article></main></body></html>
