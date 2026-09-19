@@ -1,0 +1,1167 @@
+{
+  "sample_rate": 16000,
+  "source": "sapi per-token synthesis (local, offline)",
+  "langs": {
+    "zh": {
+      "lang": "zh",
+      "lang_name": "中文",
+      "tts_backend": "sapi",
+      "voice": "Microsoft Huihui Desktop - Chinese (Simplified)",
+      "granularity": "char",
+      "n_tokens": 18,
+      "n_unique_tokens": 18,
+      "truncated": 0,
+      "lyrics_lines": [
+        "东风送来清凉",
+        "小船划过池塘",
+        "月色照在桥上"
+      ],
+      "tokens": [
+        "东",
+        "风",
+        "送",
+        "来",
+        "清",
+        "凉",
+        "小",
+        "船",
+        "划",
+        "过",
+        "池",
+        "塘",
+        "月",
+        "色",
+        "照",
+        "在",
+        "桥",
+        "上"
+      ],
+      "variants": {
+        "gapped_clean": {
+          "gap_seconds": 0.12,
+          "bed": null,
+          "audio": "data\\synth\\zh\\zh_gapped_clean.wav",
+          "duration": 7.6423,
+          "truth": [
+            {
+              "text": "东",
+              "start": 0.0,
+              "end": 0.2406
+            },
+            {
+              "text": "风",
+              "start": 0.3606,
+              "end": 0.6201
+            },
+            {
+              "text": "送",
+              "start": 0.7401,
+              "end": 1.0194
+            },
+            {
+              "text": "来",
+              "start": 1.1394,
+              "end": 1.4747
+            },
+            {
+              "text": "清",
+              "start": 1.5947,
+              "end": 1.9372
+            },
+            {
+              "text": "凉",
+              "start": 2.0572,
+              "end": 2.366
+            },
+            {
+              "text": "小",
+              "start": 2.486,
+              "end": 2.8534
+            },
+            {
+              "text": "船",
+              "start": 2.9734,
+              "end": 3.3244
+            },
+            {
+              "text": "划",
+              "start": 3.4444,
+              "end": 3.7213
+            },
+            {
+              "text": "过",
+              "start": 3.8413,
+              "end": 4.0661
+            },
+            {
+              "text": "池",
+              "start": 4.1861,
+              "end": 4.5625
+            },
+            {
+              "text": "塘",
+              "start": 4.6825,
+              "end": 5.029
+            },
+            {
+              "text": "月",
+              "start": 5.149,
+              "end": 5.371
+            },
+            {
+              "text": "色",
+              "start": 5.491,
+              "end": 5.8011
+            },
+            {
+              "text": "照",
+              "start": 5.9211,
+              "end": 6.1461
+            },
+            {
+              "text": "在",
+              "start": 6.2661,
+              "end": 6.4753
+            },
+            {
+              "text": "桥",
+              "start": 6.5953,
+              "end": 6.9434
+            },
+            {
+              "text": "上",
+              "start": 7.0634,
+              "end": 7.3423
+            }
+          ]
+        },
+        "gapped_mix": {
+          "gap_seconds": 0.12,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\zh\\zh_gapped_mix.wav",
+          "duration": 7.6423,
+          "truth": [
+            {
+              "text": "东",
+              "start": 0.0,
+              "end": 0.2406
+            },
+            {
+              "text": "风",
+              "start": 0.3606,
+              "end": 0.6201
+            },
+            {
+              "text": "送",
+              "start": 0.7401,
+              "end": 1.0194
+            },
+            {
+              "text": "来",
+              "start": 1.1394,
+              "end": 1.4747
+            },
+            {
+              "text": "清",
+              "start": 1.5947,
+              "end": 1.9372
+            },
+            {
+              "text": "凉",
+              "start": 2.0572,
+              "end": 2.366
+            },
+            {
+              "text": "小",
+              "start": 2.486,
+              "end": 2.8534
+            },
+            {
+              "text": "船",
+              "start": 2.9734,
+              "end": 3.3244
+            },
+            {
+              "text": "划",
+              "start": 3.4444,
+              "end": 3.7213
+            },
+            {
+              "text": "过",
+              "start": 3.8413,
+              "end": 4.0661
+            },
+            {
+              "text": "池",
+              "start": 4.1861,
+              "end": 4.5625
+            },
+            {
+              "text": "塘",
+              "start": 4.6825,
+              "end": 5.029
+            },
+            {
+              "text": "月",
+              "start": 5.149,
+              "end": 5.371
+            },
+            {
+              "text": "色",
+              "start": 5.491,
+              "end": 5.8011
+            },
+            {
+              "text": "照",
+              "start": 5.9211,
+              "end": 6.1461
+            },
+            {
+              "text": "在",
+              "start": 6.2661,
+              "end": 6.4753
+            },
+            {
+              "text": "桥",
+              "start": 6.5953,
+              "end": 6.9434
+            },
+            {
+              "text": "上",
+              "start": 7.0634,
+              "end": 7.3423
+            }
+          ]
+        },
+        "legato_clean": {
+          "gap_seconds": 0.0,
+          "bed": null,
+          "audio": "data\\synth\\zh\\zh_legato_clean.wav",
+          "duration": 5.6023,
+          "truth": [
+            {
+              "text": "东",
+              "start": 0.0,
+              "end": 0.2406
+            },
+            {
+              "text": "风",
+              "start": 0.2406,
+              "end": 0.5001
+            },
+            {
+              "text": "送",
+              "start": 0.5001,
+              "end": 0.7794
+            },
+            {
+              "text": "来",
+              "start": 0.7794,
+              "end": 1.1147
+            },
+            {
+              "text": "清",
+              "start": 1.1147,
+              "end": 1.4572
+            },
+            {
+              "text": "凉",
+              "start": 1.4572,
+              "end": 1.766
+            },
+            {
+              "text": "小",
+              "start": 1.766,
+              "end": 2.1334
+            },
+            {
+              "text": "船",
+              "start": 2.1334,
+              "end": 2.4844
+            },
+            {
+              "text": "划",
+              "start": 2.4844,
+              "end": 2.7613
+            },
+            {
+              "text": "过",
+              "start": 2.7613,
+              "end": 2.9861
+            },
+            {
+              "text": "池",
+              "start": 2.9861,
+              "end": 3.3625
+            },
+            {
+              "text": "塘",
+              "start": 3.3625,
+              "end": 3.709
+            },
+            {
+              "text": "月",
+              "start": 3.709,
+              "end": 3.931
+            },
+            {
+              "text": "色",
+              "start": 3.931,
+              "end": 4.2411
+            },
+            {
+              "text": "照",
+              "start": 4.2411,
+              "end": 4.4661
+            },
+            {
+              "text": "在",
+              "start": 4.4661,
+              "end": 4.6753
+            },
+            {
+              "text": "桥",
+              "start": 4.6753,
+              "end": 5.0234
+            },
+            {
+              "text": "上",
+              "start": 5.0234,
+              "end": 5.3023
+            }
+          ]
+        },
+        "legato_mix": {
+          "gap_seconds": 0.0,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\zh\\zh_legato_mix.wav",
+          "duration": 5.6023,
+          "truth": [
+            {
+              "text": "东",
+              "start": 0.0,
+              "end": 0.2406
+            },
+            {
+              "text": "风",
+              "start": 0.2406,
+              "end": 0.5001
+            },
+            {
+              "text": "送",
+              "start": 0.5001,
+              "end": 0.7794
+            },
+            {
+              "text": "来",
+              "start": 0.7794,
+              "end": 1.1147
+            },
+            {
+              "text": "清",
+              "start": 1.1147,
+              "end": 1.4572
+            },
+            {
+              "text": "凉",
+              "start": 1.4572,
+              "end": 1.766
+            },
+            {
+              "text": "小",
+              "start": 1.766,
+              "end": 2.1334
+            },
+            {
+              "text": "船",
+              "start": 2.1334,
+              "end": 2.4844
+            },
+            {
+              "text": "划",
+              "start": 2.4844,
+              "end": 2.7613
+            },
+            {
+              "text": "过",
+              "start": 2.7613,
+              "end": 2.9861
+            },
+            {
+              "text": "池",
+              "start": 2.9861,
+              "end": 3.3625
+            },
+            {
+              "text": "塘",
+              "start": 3.3625,
+              "end": 3.709
+            },
+            {
+              "text": "月",
+              "start": 3.709,
+              "end": 3.931
+            },
+            {
+              "text": "色",
+              "start": 3.931,
+              "end": 4.2411
+            },
+            {
+              "text": "照",
+              "start": 4.2411,
+              "end": 4.4661
+            },
+            {
+              "text": "在",
+              "start": 4.4661,
+              "end": 4.6753
+            },
+            {
+              "text": "桥",
+              "start": 4.6753,
+              "end": 5.0234
+            },
+            {
+              "text": "上",
+              "start": 5.0234,
+              "end": 5.3023
+            }
+          ]
+        }
+      }
+    },
+    "en": {
+      "lang": "en",
+      "lang_name": "英文",
+      "tts_backend": "sapi",
+      "voice": "Microsoft Zira Desktop - English (United States)",
+      "granularity": "word",
+      "n_tokens": 15,
+      "n_unique_tokens": 13,
+      "truncated": 0,
+      "lyrics_lines": [
+        "the morning light is warm",
+        "we walk along the shore",
+        "and listen to the rain"
+      ],
+      "tokens": [
+        "the",
+        "morning",
+        "light",
+        "is",
+        "warm",
+        "we",
+        "walk",
+        "along",
+        "the",
+        "shore",
+        "and",
+        "listen",
+        "to",
+        "the",
+        "rain"
+      ],
+      "variants": {
+        "gapped_clean": {
+          "gap_seconds": 0.12,
+          "bed": null,
+          "audio": "data\\synth\\en\\en_gapped_clean.wav",
+          "duration": 8.6385,
+          "truth": [
+            {
+              "text": "the",
+              "start": 0.0,
+              "end": 0.2785
+            },
+            {
+              "text": "morning",
+              "start": 0.3985,
+              "end": 1.0634
+            },
+            {
+              "text": "light",
+              "start": 1.1834,
+              "end": 1.6183
+            },
+            {
+              "text": "is",
+              "start": 1.7383,
+              "end": 2.1586
+            },
+            {
+              "text": "warm",
+              "start": 2.2786,
+              "end": 2.7668
+            },
+            {
+              "text": "we",
+              "start": 2.8868,
+              "end": 3.2104
+            },
+            {
+              "text": "walk",
+              "start": 3.3304,
+              "end": 3.776
+            },
+            {
+              "text": "along",
+              "start": 3.896,
+              "end": 4.4416
+            },
+            {
+              "text": "the",
+              "start": 4.5616,
+              "end": 4.8401
+            },
+            {
+              "text": "shore",
+              "start": 4.9601,
+              "end": 5.5144
+            },
+            {
+              "text": "and",
+              "start": 5.6344,
+              "end": 6.039
+            },
+            {
+              "text": "listen",
+              "start": 6.159,
+              "end": 6.8519
+            },
+            {
+              "text": "to",
+              "start": 6.9719,
+              "end": 7.329
+            },
+            {
+              "text": "the",
+              "start": 7.449,
+              "end": 7.7275
+            },
+            {
+              "text": "rain",
+              "start": 7.8475,
+              "end": 8.3385
+            }
+          ]
+        },
+        "gapped_mix": {
+          "gap_seconds": 0.12,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\en\\en_gapped_mix.wav",
+          "duration": 8.6385,
+          "truth": [
+            {
+              "text": "the",
+              "start": 0.0,
+              "end": 0.2785
+            },
+            {
+              "text": "morning",
+              "start": 0.3985,
+              "end": 1.0634
+            },
+            {
+              "text": "light",
+              "start": 1.1834,
+              "end": 1.6183
+            },
+            {
+              "text": "is",
+              "start": 1.7383,
+              "end": 2.1586
+            },
+            {
+              "text": "warm",
+              "start": 2.2786,
+              "end": 2.7668
+            },
+            {
+              "text": "we",
+              "start": 2.8868,
+              "end": 3.2104
+            },
+            {
+              "text": "walk",
+              "start": 3.3304,
+              "end": 3.776
+            },
+            {
+              "text": "along",
+              "start": 3.896,
+              "end": 4.4416
+            },
+            {
+              "text": "the",
+              "start": 4.5616,
+              "end": 4.8401
+            },
+            {
+              "text": "shore",
+              "start": 4.9601,
+              "end": 5.5144
+            },
+            {
+              "text": "and",
+              "start": 5.6344,
+              "end": 6.039
+            },
+            {
+              "text": "listen",
+              "start": 6.159,
+              "end": 6.8519
+            },
+            {
+              "text": "to",
+              "start": 6.9719,
+              "end": 7.329
+            },
+            {
+              "text": "the",
+              "start": 7.449,
+              "end": 7.7275
+            },
+            {
+              "text": "rain",
+              "start": 7.8475,
+              "end": 8.3385
+            }
+          ]
+        },
+        "legato_clean": {
+          "gap_seconds": 0.0,
+          "bed": null,
+          "audio": "data\\synth\\en\\en_legato_clean.wav",
+          "duration": 6.9585,
+          "truth": [
+            {
+              "text": "the",
+              "start": 0.0,
+              "end": 0.2785
+            },
+            {
+              "text": "morning",
+              "start": 0.2785,
+              "end": 0.9434
+            },
+            {
+              "text": "light",
+              "start": 0.9434,
+              "end": 1.3783
+            },
+            {
+              "text": "is",
+              "start": 1.3783,
+              "end": 1.7986
+            },
+            {
+              "text": "warm",
+              "start": 1.7986,
+              "end": 2.2868
+            },
+            {
+              "text": "we",
+              "start": 2.2868,
+              "end": 2.6104
+            },
+            {
+              "text": "walk",
+              "start": 2.6104,
+              "end": 3.056
+            },
+            {
+              "text": "along",
+              "start": 3.056,
+              "end": 3.6016
+            },
+            {
+              "text": "the",
+              "start": 3.6016,
+              "end": 3.8801
+            },
+            {
+              "text": "shore",
+              "start": 3.8801,
+              "end": 4.4344
+            },
+            {
+              "text": "and",
+              "start": 4.4344,
+              "end": 4.839
+            },
+            {
+              "text": "listen",
+              "start": 4.839,
+              "end": 5.5319
+            },
+            {
+              "text": "to",
+              "start": 5.5319,
+              "end": 5.889
+            },
+            {
+              "text": "the",
+              "start": 5.889,
+              "end": 6.1675
+            },
+            {
+              "text": "rain",
+              "start": 6.1675,
+              "end": 6.6585
+            }
+          ]
+        },
+        "legato_mix": {
+          "gap_seconds": 0.0,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\en\\en_legato_mix.wav",
+          "duration": 6.9585,
+          "truth": [
+            {
+              "text": "the",
+              "start": 0.0,
+              "end": 0.2785
+            },
+            {
+              "text": "morning",
+              "start": 0.2785,
+              "end": 0.9434
+            },
+            {
+              "text": "light",
+              "start": 0.9434,
+              "end": 1.3783
+            },
+            {
+              "text": "is",
+              "start": 1.3783,
+              "end": 1.7986
+            },
+            {
+              "text": "warm",
+              "start": 1.7986,
+              "end": 2.2868
+            },
+            {
+              "text": "we",
+              "start": 2.2868,
+              "end": 2.6104
+            },
+            {
+              "text": "walk",
+              "start": 2.6104,
+              "end": 3.056
+            },
+            {
+              "text": "along",
+              "start": 3.056,
+              "end": 3.6016
+            },
+            {
+              "text": "the",
+              "start": 3.6016,
+              "end": 3.8801
+            },
+            {
+              "text": "shore",
+              "start": 3.8801,
+              "end": 4.4344
+            },
+            {
+              "text": "and",
+              "start": 4.4344,
+              "end": 4.839
+            },
+            {
+              "text": "listen",
+              "start": 4.839,
+              "end": 5.5319
+            },
+            {
+              "text": "to",
+              "start": 5.5319,
+              "end": 5.889
+            },
+            {
+              "text": "the",
+              "start": 5.889,
+              "end": 6.1675
+            },
+            {
+              "text": "rain",
+              "start": 6.1675,
+              "end": 6.6585
+            }
+          ]
+        }
+      }
+    },
+    "ja": {
+      "lang": "ja",
+      "lang_name": "日文",
+      "tts_backend": "sapi",
+      "voice": "Microsoft Haruka Desktop - Japanese",
+      "granularity": "char",
+      "n_tokens": 15,
+      "n_unique_tokens": 13,
+      "truncated": 0,
+      "lyrics_lines": [
+        "朝の光が",
+        "空を渡って",
+        "風が吹いてる"
+      ],
+      "tokens": [
+        "朝",
+        "の",
+        "光",
+        "が",
+        "空",
+        "を",
+        "渡",
+        "っ",
+        "て",
+        "風",
+        "が",
+        "吹",
+        "い",
+        "て",
+        "る"
+      ],
+      "variants": {
+        "gapped_clean": {
+          "gap_seconds": 0.12,
+          "bed": null,
+          "audio": "data\\synth\\ja\\ja_gapped_clean.wav",
+          "duration": 5.5656,
+          "truth": [
+            {
+              "text": "朝",
+              "start": 0.0,
+              "end": 0.3169
+            },
+            {
+              "text": "の",
+              "start": 0.4369,
+              "end": 0.6078
+            },
+            {
+              "text": "光",
+              "start": 0.7278,
+              "end": 1.0797
+            },
+            {
+              "text": "が",
+              "start": 1.1998,
+              "end": 1.3798
+            },
+            {
+              "text": "空",
+              "start": 1.4997,
+              "end": 1.8017
+            },
+            {
+              "text": "を",
+              "start": 1.9218,
+              "end": 2.074
+            },
+            {
+              "text": "渡",
+              "start": 2.194,
+              "end": 2.5266
+            },
+            {
+              "text": "っ",
+              "start": 2.6466,
+              "end": 2.8327
+            },
+            {
+              "text": "て",
+              "start": 2.9527,
+              "end": 3.1034
+            },
+            {
+              "text": "風",
+              "start": 3.2234,
+              "end": 3.5641
+            },
+            {
+              "text": "が",
+              "start": 3.6841,
+              "end": 3.8641
+            },
+            {
+              "text": "吹",
+              "start": 3.9841,
+              "end": 4.3611
+            },
+            {
+              "text": "い",
+              "start": 4.4811,
+              "end": 4.6683
+            },
+            {
+              "text": "て",
+              "start": 4.7883,
+              "end": 4.939
+            },
+            {
+              "text": "る",
+              "start": 5.059,
+              "end": 5.2656
+            }
+          ]
+        },
+        "gapped_mix": {
+          "gap_seconds": 0.12,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\ja\\ja_gapped_mix.wav",
+          "duration": 5.5656,
+          "truth": [
+            {
+              "text": "朝",
+              "start": 0.0,
+              "end": 0.3169
+            },
+            {
+              "text": "の",
+              "start": 0.4369,
+              "end": 0.6078
+            },
+            {
+              "text": "光",
+              "start": 0.7278,
+              "end": 1.0797
+            },
+            {
+              "text": "が",
+              "start": 1.1998,
+              "end": 1.3798
+            },
+            {
+              "text": "空",
+              "start": 1.4997,
+              "end": 1.8017
+            },
+            {
+              "text": "を",
+              "start": 1.9218,
+              "end": 2.074
+            },
+            {
+              "text": "渡",
+              "start": 2.194,
+              "end": 2.5266
+            },
+            {
+              "text": "っ",
+              "start": 2.6466,
+              "end": 2.8327
+            },
+            {
+              "text": "て",
+              "start": 2.9527,
+              "end": 3.1034
+            },
+            {
+              "text": "風",
+              "start": 3.2234,
+              "end": 3.5641
+            },
+            {
+              "text": "が",
+              "start": 3.6841,
+              "end": 3.8641
+            },
+            {
+              "text": "吹",
+              "start": 3.9841,
+              "end": 4.3611
+            },
+            {
+              "text": "い",
+              "start": 4.4811,
+              "end": 4.6683
+            },
+            {
+              "text": "て",
+              "start": 4.7883,
+              "end": 4.939
+            },
+            {
+              "text": "る",
+              "start": 5.059,
+              "end": 5.2656
+            }
+          ]
+        },
+        "legato_clean": {
+          "gap_seconds": 0.0,
+          "bed": null,
+          "audio": "data\\synth\\ja\\ja_legato_clean.wav",
+          "duration": 3.8856,
+          "truth": [
+            {
+              "text": "朝",
+              "start": 0.0,
+              "end": 0.3169
+            },
+            {
+              "text": "の",
+              "start": 0.3169,
+              "end": 0.4878
+            },
+            {
+              "text": "光",
+              "start": 0.4878,
+              "end": 0.8397
+            },
+            {
+              "text": "が",
+              "start": 0.8397,
+              "end": 1.0197
+            },
+            {
+              "text": "空",
+              "start": 1.0197,
+              "end": 1.3217
+            },
+            {
+              "text": "を",
+              "start": 1.3217,
+              "end": 1.474
+            },
+            {
+              "text": "渡",
+              "start": 1.474,
+              "end": 1.8066
+            },
+            {
+              "text": "っ",
+              "start": 1.8066,
+              "end": 1.9927
+            },
+            {
+              "text": "て",
+              "start": 1.9927,
+              "end": 2.1434
+            },
+            {
+              "text": "風",
+              "start": 2.1434,
+              "end": 2.4841
+            },
+            {
+              "text": "が",
+              "start": 2.4841,
+              "end": 2.6641
+            },
+            {
+              "text": "吹",
+              "start": 2.6641,
+              "end": 3.0411
+            },
+            {
+              "text": "い",
+              "start": 3.0411,
+              "end": 3.2283
+            },
+            {
+              "text": "て",
+              "start": 3.2283,
+              "end": 3.379
+            },
+            {
+              "text": "る",
+              "start": 3.379,
+              "end": 3.5856
+            }
+          ]
+        },
+        "legato_mix": {
+          "gap_seconds": 0.0,
+          "bed": "synthetic_bed@4.0dB",
+          "audio": "data\\synth\\ja\\ja_legato_mix.wav",
+          "duration": 3.8856,
+          "truth": [
+            {
+              "text": "朝",
+              "start": 0.0,
+              "end": 0.3169
+            },
+            {
+              "text": "の",
+              "start": 0.3169,
+              "end": 0.4878
+            },
+            {
+              "text": "光",
+              "start": 0.4878,
+              "end": 0.8397
+            },
+            {
+              "text": "が",
+              "start": 0.8397,
+              "end": 1.0197
+            },
+            {
+              "text": "空",
+              "start": 1.0197,
+              "end": 1.3217
+            },
+            {
+              "text": "を",
+              "start": 1.3217,
+              "end": 1.474
+            },
+            {
+              "text": "渡",
+              "start": 1.474,
+              "end": 1.8066
+            },
+            {
+              "text": "っ",
+              "start": 1.8066,
+              "end": 1.9927
+            },
+            {
+              "text": "て",
+              "start": 1.9927,
+              "end": 2.1434
+            },
+            {
+              "text": "風",
+              "start": 2.1434,
+              "end": 2.4841
+            },
+            {
+              "text": "が",
+              "start": 2.4841,
+              "end": 2.6641
+            },
+            {
+              "text": "吹",
+              "start": 2.6641,
+              "end": 3.0411
+            },
+            {
+              "text": "い",
+              "start": 3.0411,
+              "end": 3.2283
+            },
+            {
+              "text": "て",
+              "start": 3.2283,
+              "end": 3.379
+            },
+            {
+              "text": "る",
+              "start": 3.379,
+              "end": 3.5856
+            }
+          ]
+        }
+      }
+    }
+  }
+}

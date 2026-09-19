@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>lets-karaoke · 卡拉OK字幕工坊</title>
+<link rel="stylesheet" href="/diagnostics.css">
+<script src="/diagnostics.js"></script>
+<style>
+:root{
+  --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
+  --fg:#e6edf3; --muted:#8b949e; --accent:#58a6ff; --accent2:#1f6feb;
+  --ok:#3fb950; --warn:#d29922; --err:#f85149; --gold:#ffd24a;
+  --radius:10px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0;height:100%}
+body{
+  background:var(--bg); color:var(--fg);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",
+       "PingFang SC",sans-serif;
+}
+a{color:var(--accent)}
+header{
+  display:flex;align-items:center;gap:12px;padding:14px 20px;
+  border-bottom:1px solid var(--line);background:var(--panel);position:sticky;top:0;z-index:20;
+}
+header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.3px}
+.pill{
+  font-size:11px;padding:2px 9px;border-radius:99px;
+  border:1px solid var(--line);color:var(--muted);background:var(--panel2);
+}
+.pill.on{color:var(--ok);border-color:#2ea04366;background:#2ea0431a}
+.spacer{flex:1}
+.wrap{display:grid;grid-template-columns:minmax(360px,430px) 1fr;gap:16px;padding:16px;align-items:start}
+@media(max-width:1080px){.wrap{grid-template-columns:1fr}}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
+.card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;
+  text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:8px}
+.card h2 .n{
+  display:inline-grid;place-items:center;width:19px;height:19px;border-radius:50%;
+  background:var(--accent2);color:#fff;font-size:11px;font-weight:700;
+}
+label.fl{display:block;font-size:12px;color:var(--muted);margin:12px 0 5px}
+label.fl:first-of-type{margin-top:0}
+input[type=text],input[type=number],textarea,select{
+  width:100%;background:#0d1117;color:var(--fg);border:1px solid var(--line);
+  border-radius:7px;padding:8px 10px;font:inherit;outline:none;
+}
+input:focus,textarea:focus,select:focus{border-color:var(--accent);box-shadow:0 0 0 3px #58a6ff22}
+textarea{resize:vertical;min-height:104px;font-family:ui-monospace,"Cascadia Mono",Consolas,monospace;font-size:13px}
+input[type=range]{width:100%;accent-color:var(--accent)}
+input[type=color]{width:100%;height:34px;padding:2px;background:#0d1117;border:1px solid var(--line);border-radius:7px;cursor:pointer}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.seg{display:flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{
+  flex:1;background:transparent;border:0;color:var(--muted);padding:8px 4px;
+  font:inherit;font-size:13px;cursor:pointer;transition:.12s;
+}
+.seg button+button{border-left:1px solid var(--line)}
+.seg button:hover{color:var(--fg);background:#ffffff08}
+.seg button.on{background:var(--accent2);color:#fff;font-weight:600}
+.drop{
+  border:1.5px dashed var(--line);border-radius:9px;padding:18px 12px;text-align:center;
+  color:var(--muted);cursor:pointer;transition:.15s;background:#0d1117;
+}
+.drop:hover,.drop.hot{border-color:var(--accent);color:var(--accent);background:#58a6ff0d}
+.drop b{display:block;color:var(--fg);font-size:13px;margin-bottom:3px;font-weight:600}
+.drop .fn{color:var(--ok);font-size:12px;margin-top:6px;word-break:break-all}
+.drop.has{border-color:#2ea04366}
+button.primary,button.ghost{
+  font:inherit;font-weight:600;border-radius:8px;padding:10px 18px;cursor:pointer;border:1px solid transparent;transition:.12s;
+}
+button.primary{background:var(--accent2);color:#fff;width:100%;font-size:14px}
+button.primary:hover:not(:disabled){background:#2f81f7}
+button.primary:disabled{opacity:.45;cursor:not-allowed}
+button.ghost{background:transparent;color:var(--fg);border-color:var(--line)}
+button.ghost:hover{background:#ffffff0d;border-color:var(--muted)}
+button.mini{font:inherit;font-size:12px;padding:4px 10px;border-radius:6px;
+  background:transparent;color:var(--muted);border:1px solid var(--line);cursor:pointer}
+button.mini:hover{color:var(--fg);border-color:var(--muted)}
+.bar{height:7px;background:#0d1117;border-radius:99px;overflow:hidden;border:1px solid var(--line)}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--ok));transition:width .3s}
+.barwrap{margin:4px 0 10px}
+.barwrap .lbl{display:flex;justify-content:space-between;font-size:12px;color:var(--muted);margin-bottom:5px}
+pre.log{
+  background:#090c10;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+  height:168px;overflow:auto;font:12px/1.65 ui-monospace,"Cascadia Mono",Consolas,monospace;
+  color:#adbac7;white-space:pre-wrap;word-break:break-all;margin:0;
+}
+pre.log .e{color:var(--err)}
+video{width:100%;border-radius:8px;background:#000;display:block;aspect-ratio:16/9}
+.dl{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+.dl a{
+  font-size:12.5px;text-decoration:none;padding:7px 13px;border-radius:7px;
+  border:1px solid var(--line);color:var(--fg);background:var(--panel2);
+}
+.dl a:hover{border-color:var(--accent);color:var(--accent)}
+.stat{display:grid;grid-template-columns:repeat(auto-fill,minmax(112px,1fr));gap:9px;margin-top:12px}
+.stat div{background:var(--panel2);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.stat b{display:block;font-size:15px;font-weight:600}
+.stat span{font-size:11px;color:var(--muted)}
+.tblwrap{max-height:372px;overflow:auto;border:1px solid var(--line);border-radius:8px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{position:sticky;top:0;background:var(--panel2);z-index:2;text-align:left;
+  padding:8px 9px;color:var(--muted);font-weight:600;border-bottom:1px solid var(--line);white-space:nowrap}
+td{padding:5px 9px;border-bottom:1px solid #ffffff0a;white-space:nowrap}
+tr:hover td{background:#ffffff06}
+tr.playing-line td{background:#1f6feb25;border-bottom-color:var(--accent)}
+tr.playing-line td:first-child{box-shadow:inset 3px 0 var(--accent);color:var(--accent)}
+td.txt{max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
+td.num{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-size:12px}
+td input[type=number]{width:80px;padding:3px 7px;font-size:12.5px}
+.hint{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.7}
+.hint code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:11.5px}
+details{margin-top:10px}
+summary{cursor:pointer;color:var(--muted);font-size:12.5px;user-select:none;list-style:none}
+summary::-webkit-details-marker{display:none}
+summary:before{content:"▸ ";color:var(--accent)}
+details[open] summary:before{content:"▾ "}
+.err{color:var(--err);font-size:12.5px;margin-top:10px;white-space:pre-wrap;word-break:break-all}
+.hidden{display:none!important}
+.badge{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
+.badge.ok{color:var(--ok);border-color:#2ea04366}
+.badge.bad{color:var(--err);border-color:#f8514966}
+.rule-help{
+  position:fixed;right:20px;top:72px;width:min(390px,calc(100vw - 40px));max-height:calc(100vh - 96px);
+  overflow:auto;z-index:40;background:#1c2430f5;border:1px solid #5b8edc88;border-radius:12px;
+  box-shadow:0 16px 46px #0009;backdrop-filter:blur(10px);padding:14px 16px;color:var(--fg)
+}
+.rule-help h3{font-size:14px;margin:0;color:#dbeafe;display:flex;align-items:center;gap:8px}
+.rule-help h3 span{font-size:11px;font-weight:400;color:var(--muted);margin-left:auto}
+.rule-help h4{font-size:12px;margin:14px 0 4px;color:var(--accent)}
+.rule-help dl{margin:0}
+.rule-help dt{font-size:12px;font-weight:600;color:var(--fg);margin-top:7px}
+.rule-help dd{font-size:11.5px;line-height:1.45;color:#b8c4d4;margin:1px 0 0 0}
+.rule-help .help-note{font-size:11.5px;color:var(--muted);margin:7px 0 0}
+.rule-help .help-close{float:right;border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:0 0 0 8px}
+.rule-help .help-close:hover{color:var(--fg)}
+@media(max-width:700px){.rule-help{right:10px;top:62px;width:calc(100vw - 20px);max-height:70vh}}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>lets-karaoke · 卡拉OK字幕工坊</h1>
+  <span class="pill on">全本地模型</span>
+  <span class="pill">无在线 API</span>
+  <span class="spacer"></span>
+  <span class="pill" id="devPill">设备探测中…</span>
+</header>
+
+<div class="wrap">
+  <!-- ================= 左栏 ================= -->
+  <div>
+    <div class="card">
+      <details id="historyPanel"><summary>本地历史记录 <span id="historyCount"></span></summary>
+        <p class="hint">扫描项目 out 目录中的已保存任务和对齐结果。选择记录可恢复所有版本；缺少原任务配置的实验结果仅供查看。</p>
+        <input id="historySearch" type="text" placeholder="按歌曲或目录搜索" aria-label="搜索历史记录">
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
+          <button class="mini" id="selectAllHistory">全选当前结果</button>
+          <button class="mini" id="deleteSelectedHistory" style="color:var(--err)">删除选中</button>
+          <button class="mini" id="clearHistory" style="color:var(--err)">清空历史</button>
+          <button class="mini" id="refreshHistory">重新扫描</button>
+        </div>
+        <div class="hint" id="historyActionMsg"></div>
+        <div id="historyList" style="max-height:340px;overflow:auto;margin-top:8px"></div>
+      </details>
+    </div>
+    <div class="card">
+      <h2><span class="n">1</span>输入</h2>
+
+      <label class="fl">视频 / 音频（必填）</label>
+      <div class="drop" id="dropMedia">
+        <b>拖入文件，或点击选择</b>
+        <span>mp4 · mkv · mov · mp3 · wav · flac</span>
+        <div class="fn" id="fnMedia"></div>
+      </div>
+      <input type="file" id="media" accept="video/*,audio/*" class="hidden">
+
+      <label class="fl">歌词来源（三选一 · 不确定就选第一个）</label>
+      <div class="seg" id="segSrc" style="margin-bottom:7px">
+        <button data-v="whisper" class="on">① 我有歌词 · whisper 对齐</button>
+        <button data-v="sofa">② 我有歌词 · SOFA 对齐</button>
+        <button data-v="asr">③ 没歌词 · 自动转写</button>
+      </div>
+      <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
+      <div id="whisperOpts"
+           style="font-size:12.5px;color:var(--tx2);margin:-2px 0 9px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          模型
+          <select id="whisperModel" style="width:auto;padding:3px 6px">
+            <option value="large-v3">large-v3（最准）</option>
+            <option value="medium">medium（快）</option>
+            <option value="base">base（最快）</option>
+          </select>
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+          <input type="checkbox" id="useVocalGuide" checked style="width:auto;margin:0">
+          人声能量引导（多花约 30-60s，修抢跑/拖尾）
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;cursor:pointer"
+               title="实测：现场版/密集伴奏上喂干声平均词概率 0.63→0.67、耗时 −25%；干净录音打平。两个开关都关才会跳过分离。">
+          <input type="checkbox" id="useAlignVocals" checked style="width:auto;margin:0">
+          对齐喂人声干声（更准 · 复用同一次分离）
+        </label>
+      </div>
+      <label>对齐策略
+        <select id="alignmentProfile">
+          <option value="balanced">自动均衡（当前测试推荐 · 保留长音，最后检查尾界）</option>
+          <option value="automatic">轻量修正（实验 · 仅有限修正边界）</option>
+          <option value="legacy">旧规则（对照 · 允许整行重排和搬移）</option>
+        </select>
+      </label>
+      <label style="display:flex;gap:6px;align-items:center">
+        <input type="checkbox" id="useDual" checked style="width:auto">
+        干声与混音双路对齐，自动选择结果
+      </label>
+      <details id="advRules" style="margin:8px 0">
+        <summary>高级参数（通常无需调整）</summary>
+        <p class="hint">默认参数来自通用合成测试，通常无需调整。
+        轻量修正和旧规则用于对照；模型分数不代表字幕准确率。</p>
+        <div id="ruleFields" style="display:grid;grid-template-columns:1fr 1fr;gap:8px"></div>
+        <button type="button" class="ghost" id="resetRules">恢复当前模式默认值</button>
+      </details>
+      <div id="ruleHelp" class="rule-help hidden" role="dialog" aria-label="高级参数说明">
+        <button type="button" class="help-close" id="closeRuleHelp" aria-label="关闭说明">×</button>
+        <h3>高级参数说明 <span>通常保持默认</span></h3>
+        <p class="help-note">这些参数是在“模型时间轴”之后做的有限修正。先听成片，再只调整最相关的一两项。</p>
+        <h4>边界与时间轴</h4>
+        <dl>
+          <dt>boundary_limit · 自动边界最大调整</dt><dd>限制起点或尾点吸附的最大距离。调大可能修复偏移，但更容易吸附到相邻声音。</dd>
+          <dt>gap_max · 句内断档阈值</dt><dd>同一句歌词内部间隔超过此值时，认为出现错锚并尝试重排。长间奏歌曲可适当调大。</dd>
+          <dt>min_line_dur · 最短行时长</dt><dd>防止字幕一闪而过。调大能提高可读性，但可能造成相邻句重叠。</dd>
+          <dt>char_rate_min · 每字最短时长</dt><dd>按字数给短句设置下限，主要防止密集副歌闪现；快速 Rap 不宜设得过大。</dd>
+          <dt>char_dur_max · 单字时长上限</dt><dd>限制单个字挂在屏幕上的最长时间。设为 0 表示不限，适合保留拖音。</dd>
+          <dt>tail_gain · 拖音延长上限</dt><dd>人声仍在唱时，允许把最后一个字延长的最大秒数。现场混响重时应谨慎调大。</dd>
+        </dl>
+        <h4>人声引导</h4>
+        <dl>
+          <dt>vocal_thr · 活跃人声阈值</dt><dd>判断人声是否存在的能量门槛。调低会保留更多弱声，也可能把观众声当成人声。</dd>
+          <dt>rel_drop_db · 弱能量剔除</dt><dd>相对主唱能量低于此值的短段会被忽略；设为 0 可关闭。</dd>
+          <dt>start_snap · 起点吸附</dt><dd>把歌词起点靠近检测到的人声开始处，适合抢跑明显的现场录音。</dd>
+          <dt>tail_clamp / clamp_tails_per_line · 尾部收回</dt><dd>人声结束后仍在显示的字幕会收回，避免尾部挂屏。</dd>
+          <dt>tail_extend · 拖音补偿</dt><dd>人声尾音仍在持续时延长最后一个字；关闭后更保守。</dd>
+        </dl>
+        <h4>置信度与异常修正</h4>
+        <dl>
+          <dt>conf_high / conf_low · 高低置信阈值</dt><dd>划分可靠、可疑的歌词行。它们影响是否允许自动修正，不是准确率。</dd>
+          <dt>ev_prob / ev_dur · 证据词门槛</dt><dd>判定某行是否有足够可靠的词级声学证据，避免用退化闪点定位。</dd>
+          <dt>relocate_lowconf · 低置信行搬移</dt><dd>把明显错位的低置信行放入附近未占用的人声区间。重复副歌时建议谨慎。</dd>
+          <dt>zeroconf_collapse / zeroconf_p · 零置信压缩</dt><dd>压缩几乎没有声学证据的退化时间轴，避免整句错误铺开。</dd>
+        </dl>
+        <h4>交叉检查与规则开关</h4>
+        <dl>
+          <dt>tx_crosscheck · 转写交叉验证</dt><dd>用独立转写检查人声区间是否像歌词。喊叫、和声较多时可能误删，默认策略通常已关闭。</dd>
+          <dt>tx_min_match / tx_prune_min / tx_max_seg / tx_cap_frac</dt><dd>控制交叉验证的匹配门槛、最短剪除长度、最长可剪段和总剪除比例。只有启用上项时才生效。</dd>
+          <dt>reflow_gapped / fix_over_long · 断档与超长修正</dt><dd>分别处理句内大断档和整句过长。属于较激进的修正，建议先用自动均衡模式。</dd>
+          <dt>drop_beyond_vocals · 删除人声区外歌词</dt><dd>移除落在最后一段人声之后的行。现场版本少唱尾段时有用，但需要确认确实没唱。</dd>
+          <dt>enforce_timing · 最短时长与不重叠</dt><dd>最后的结构安全检查，保证时间轴可渲染；通过不代表字幕一定唱准。</dd>
+        </dl>
+      </div>
+      <div id="whisperNeedLyrics" class="hidden"
+           style="font-size:12px;color:var(--warn);margin:-4px 0 9px">
+        ⚠ 请先粘贴或选择歌词文本 —— 对齐是把「你给的词」对到音频上，不是转写。
+      </div>
+      <div id="asrHint" class="hidden"
+           style="font-size:12px;color:var(--warn);margin:-4px 0 9px">
+        ⚠ 转写前请把下面的「歌词语言」从「自动」改成实际语言。实测自动判别会把
+        日文歌误判成英文，转写量翻一倍多且大量幻觉。
+      </div>
+      <div id="sofaHint" class="hidden"
+           style="font-size:12px;color:var(--tx2);margin:-4px 0 9px">
+        SOFA（实验性）＝歌声专用音素级对齐：先由 whisper 定位每行，再用 SOFA
+        在行内细化到 mora（日语假名）粒度。使用系统 Python 的 SOFA 依赖；
+        英文行会自动回退用 whisper 时间。
+      </div>
+      <textarea id="lyrics" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;—— 也可粘贴 LRC：[00:12.34]东风送来清凉&#10;—— 没有歌词文件？把上面切到「③ 没歌词 · 自动转写」&#10;—— 没时间戳也行，会自动对齐"></textarea>
+      <div class="row" style="margin-top:9px">
+        <label class="mini" style="text-align:center;padding:7px 0;cursor:pointer;display:block">
+          选择歌词文件 <input type="file" id="lyricsFile" accept=".txt,.lrc,.srt,.ass" class="hidden">
+        </label>
+        <button class="mini" id="btnClearLyrics">清空</button>
+      </div>
+      <div class="fn" id="fnLyrics" style="font-size:12px;color:var(--ok);margin-top:6px;word-break:break-all"></div>
+
+      <label class="fl">独立音轨（可选 · 伴奏或干声，将替换原音）</label>
+      <div class="drop" id="dropTrack">
+        <b>拖入或点击选择</b><span>留空则使用视频自带音轨</span>
+        <div class="fn" id="fnTrack"></div>
+      </div>
+      <input type="file" id="track" accept="audio/*" class="hidden">
+
+      <label class="fl">人声处理</label>
+      <div class="seg" id="segVocal">
+        <button data-v="remove" class="on">去除人声</button>
+        <button data-v="keep">保留原唱</button>
+      </div>
+
+      <label class="fl">歌词语言</label>
+      <div class="seg" id="segLang">
+        <button data-v="auto" class="on">自动</button>
+        <button data-v="zh">中文</button>
+        <button data-v="en">English</button>
+        <button data-v="ja">日本語</button>
+      </div>
+
+      <details>
+        <summary>高级选项</summary>
+        <div class="row" style="margin-top:10px">
+          <div>
+            <label class="fl">人声分离模型</label>
+            <select id="demucs">
+              <option value="htdemucs_ft">htdemucs_ft（最准·较慢）</option>
+              <option value="htdemucs">htdemucs（快）</option>
+            </select>
+          </div>
+          <div>
+            <label class="fl">对齐后端</label>
+            <select id="backend">
+              <option value="qwen">Qwen3-ForcedAligner</option>
+              <option value="wav2vec2">wav2vec2（基线）</option>
+            </select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <div>
+            <label class="fl">时间戳用法</label>
+            <select id="timedMode">
+              <option value="warp">吸附到时间戳（推荐）</option>
+              <option value="ignore">忽略时间戳</option>
+            </select>
+          </div>
+          <div>
+            <label class="fl">视频编码器</label>
+            <select id="encoder">
+              <option value="auto">自动（优先 NVENC）</option>
+              <option value="nvenc">h264_nvenc</option>
+              <option value="x264">libx264</option>
+            </select>
+          </div>
+        </div>
+        <label class="fl">画质（CRF/CQ，越小越清晰）<b id="qVal" style="color:var(--fg)">21</b></label>
+        <input type="range" id="quality" min="14" max="30" value="21">
+        <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px">
+          <input type="checkbox" id="separate" checked style="width:auto">
+          做人声分离（显著提升对齐精度；关闭可提速）
+        </label>
+      </details>
+    </div>
+
+    <div class="card">
+      <h2><span class="n">2</span>字幕样式</h2>
+      <div class="row">
+        <div>
+          <label class="fl">字体</label>
+          <select id="font"></select>
+        </div>
+        <div>
+          <label class="fl">字号（1080p 基准）<b id="fsVal" style="color:var(--fg)">66</b></label>
+          <input type="range" id="fontSize" min="34" max="110" value="66">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label class="fl">已唱高亮色</label>
+          <input type="color" id="sung" value="#FFD24A">
+        </div>
+        <div>
+          <label class="fl">未唱底色</label>
+          <input type="color" id="unsung" value="#FFFFFF">
+        </div>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
+          <label class="fl">预亮提前 <b id="leadVal" style="color:var(--fg)">320</b> ms</label>
+          <input type="range" id="leadMs" min="0" max="900" step="20" value="320">
+        </div>
+        <div>
+          <label class="fl">余韵延后 <b id="tailVal" style="color:var(--fg)">320</b> ms</label>
+          <input type="range" id="tailMs" min="0" max="900" step="20" value="320">
+        </div>
+      </div>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px">
+        <input type="checkbox" id="nextLine" checked style="width:auto">
+        显示下一句预览
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-size:13px">
+        <input type="checkbox" id="groupUnit" style="width:auto">
+        日文整单元高亮<span class="badge" style="margin-left:6px">日文推荐</span>
+      </label>
+      <p class="hint">日文被 nagisa 并成一个单元的多个字（如 <code>渡って</code>），
+        单元内逐字时刻只能靠插值估算，最多可偏约 300ms。勾选后按单元整体高亮，
+        只依赖模型可靠的单元边界。</p>
+    </div>
+  </div>
+
+  <!-- ================= 右栏 ================= -->
+  <div>
+    <div class="card">
+      <h2><span class="n">3</span>生成</h2>
+      <button class="primary" id="btnRun">开始生成卡拉OK</button>
+      <div class="barwrap" style="margin-top:12px">
+        <div class="lbl"><span id="stageTxt">待开始</span><span id="pctTxt">0%</span></div>
+        <div class="bar"><i id="barFill"></i></div>
+      </div>
+      <pre class="log" id="log">就绪。上传视频与歌词后点「开始生成」。</pre>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button class="ghost" id="btnCancel" style="flex:1" disabled>取消任务</button>
+      </div>
+      <div class="err hidden" id="errBox"></div>
+    </div>
+
+    <div class="card hidden" id="resultCard">
+      <h2>成片</h2>
+      <video id="player" controls playsinline></video>
+      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px">
+        <button class="ghost" id="jumpPlayingLine">定位当前播放歌词 ↓</button>
+        <label><input type="checkbox" id="followPlayingLine" style="width:auto"> 微调表自动跟随</label>
+        <span class="hint" id="playingLineInfo"></span>
+      </div>
+      <div class="dl" id="dlBox"></div>
+      <div id="alignmentDiagnostics"></div>
+      <details id="asrBox" class="hidden" style="margin-top:10px">
+        <summary>ASR 自动转写的歌词草稿（可复制校对 / 直接改字幕）</summary>
+        <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="asrInfo"></div>
+        <textarea id="asrDraft" readonly spellcheck="false"
+          style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+      </details>
+      <details id="whisperBox" class="hidden" style="margin-top:10px">
+        <summary>whisper 对齐诊断（逐字时间轴 · 建议复核低置信行）</summary>
+        <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="whisperInfo"></div>
+        <textarea id="whisperDraft" readonly spellcheck="false"
+          style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+      </details>
+      <div class="stat" id="statBox"></div>
+    </div>
+
+    <div class="card hidden" id="tuneCard">
+      <h2><span class="n">4</span>人工微调对齐<span class="spacer"></span>
+        <span class="badge" id="healthBadge">—</span></h2>
+      <p class="hint">给某一行填「偏移 ms」即可整体平移该行（正数延后、负数提前）；
+        点 <b>▶</b> 可把播放器跳到该行起点试听。改完点「应用并重新渲染」——
+        只重跑字幕与编码，不重新对齐，通常几秒完成。</p>
+      <div id="missingLyricAlert" class="hidden" style="margin:8px 0;padding:9px 11px;border:1px solid #d2992266;border-radius:8px;background:#d2992212;color:var(--warn)"></div>
+      <div class="tblwrap" style="margin-top:10px">
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+          <label>查看 / 继续编辑版本 <select id="tuneVersion" style="width:auto"></select></label>
+          <label>试听速度 <select id="tuneSpeed" style="width:auto"><option value="1">1×</option><option value="0.75">0.75×</option><option value="0.5">0.5×</option></select></label>
+          <button class="mini" id="stopLoop">停止循环</button><span class="hint" id="loopInfo"></span>
+        </div>
+        <p class="hint">展开歌词可逐字/词填写偏移。偏移相对于当前选中版本，整行与字词偏移会相加。播放器显示已渲染版本，提交后才会更新高亮；时间顺序冲突会被自动整理，需复核结果。</p>
+        <table>
+          <thead><tr>
+            <th style="width:38px">#</th><th>歌词</th><th>起点（秒）</th><th>终点（秒）</th>
+            <th style="width:96px">偏移 ms</th><th style="width:40px"></th>
+          </tr></thead>
+          <tbody id="tuneBody"></tbody>
+        </table>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <button class="primary" id="btnRerender" style="width:auto;flex:1">应用并重新渲染</button>
+        <button class="ghost" id="btnReset">清空偏移</button>
+      </div>
+      <div class="hint" id="rerenderMsg"></div>
+      <p class="hint">起点、终点可独立输入秒数；修改后句内字词按原有相对位置等比伸缩。若同时填整行偏移，会在新起止时间上叠加偏移。播放器与定位依据仍是已生成版本，提交后更新。</p>
+      <details><summary>人工锚点 · 重新对齐后续</summary>
+        <p class="hint">先用偏移调整并试听确认一句歌词，再选为锚点。将应用该句及之前的待提交偏移，锁定它们，从锚点句末重新分析其余音频。后续待提交偏移会由新对齐替代；生成独立版本，可回退。此操作需要模型推理和视频编码。</p>
+        <label>已确认的锚点句 <select id="anchorRow"></select></label>
+        <button class="ghost" id="btnAnchor">锁定此句，重新对齐后续</button>
+      </details>
+      <details><summary>插入新的歌词</summary>
+        <p class="hint">自动定位会锁定插入点前一句，重新对齐新增歌词及后续内容；手动定位直接使用填写的起止秒数，并在区间内均分字词。两种方式都会生成可回退的新版本。</p>
+        <label>插在此句之后 <select id="insertAfter"></select></label>
+        <label class="fl">新增歌词</label><input type="text" id="insertText" placeholder="输入一整句歌词">
+        <label class="fl">定位方式 <select id="insertMode"><option value="auto">自动重新对齐新增句和后续歌词</option><option value="manual">手动指定时间</option></select></label>
+        <div id="insertManual" class="row hidden"><label>起点（秒）<input type="number" id="insertStart" min="0" step="0.001"></label><label>终点（秒）<input type="number" id="insertEnd" min="0" step="0.001"></label></div>
+        <button class="ghost" id="btnInsert" style="margin-top:8px">插入并生成新版本</button>
+        <div class="hint" id="insertMsg"></div>
+      </details>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let JOB = null, ALIGN = null, ES = null;
+let TUNE_VERSION = 0, TUNE_LOOP = null;
+let HISTORY = [], EDITABLE = true, EDITING = false;
+const escapeText = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+// ---------------------------------------------------------------- 初始化
+async function boot(){
+  const meta = await (await fetch('/api/meta')).json();
+  window.RULE_META = meta;
+  renderRules();
+  const fs = $('#font');
+  meta.fonts.forEach(n => {
+    const o = document.createElement('option');
+    o.value = o.textContent = n;
+    if (n === meta.defaults.font) o.selected = true;
+    fs.appendChild(o);
+  });
+  try {
+    const r = await fetch('/api/jobs');
+    const js = await r.json();
+    $('#devPill').textContent = js.length ? `历史任务 ${js.length}` : '本地服务已就绪';
+  } catch(e){ $('#devPill').textContent = '本地服务已就绪'; }
+  await refreshHistory();
+}
+boot();
+
+// ---------------------------------------------------------------- 分段控件
+function seg(id, cb){
+  const box = $(id);
+  box.addEventListener('click', e => {
+    const b = e.target.closest('button'); if(!b) return;
+    [...box.children].forEach(x => x.classList.toggle('on', x === b));
+    cb(b.dataset.v);
+  });
+}
+let VOCAL = 'remove', LANG = 'auto', SRC = 'whisper';
+seg('#segVocal', v => VOCAL = v);
+seg('#segLang',  v => { LANG = v; refreshSrcUI(); });
+seg('#segSrc',   v => { SRC = v; refreshSrcUI(); });
+
+// 歌词来源三选一（分段选择器天然互斥，不会出现「勾了一个另一个的选项还亮着」）
+const SRC_HINT = {
+  whisper: '① 有歌词 + whisper 对齐（推荐）：把「你给的词」对到人声上；large-v3 本地跑，' +
+           '含词概率诊断 + 人声能量纠偏 + 低置信行重定位。',
+  sofa:    '② 有歌词 + SOFA 对齐（实验性）：歌声专用音素级，先 whisper 定位每行、' +
+           '再用 SOFA 细化到 mora（假名）粒度；使用系统 Python 的 SOFA 依赖，英文行自动回退 whisper。',
+  asr:     '③ 没歌词 · 自动转写：本地 Qwen3-ASR-1.7B 转写歌词草稿（务必手动选对语言），' +
+           '随后自动用 Whisper 对齐并出片；识别出的歌词仍可能有错字。',
+};
+function refreshSrcUI(){
+  $('#srcHint').textContent = SRC_HINT[SRC] || '';
+  const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0];
+  $('#whisperOpts').classList.toggle('hidden', SRC === 'sofa');
+  $('#sofaHint').classList.toggle('hidden', SRC !== 'sofa');
+  $('#asrHint').classList.toggle('hidden', !(SRC === 'asr' && LANG === 'auto'));
+  $('#whisperNeedLyrics').classList.toggle('hidden',
+      !((SRC === 'whisper' || SRC === 'sofa') && !hasLyrics));
+}
+$('#lyrics').addEventListener('input', refreshSrcUI);
+$('#lyricsFile').addEventListener('change', refreshSrcUI);
+$('#btnClearLyrics').addEventListener('click', () => setTimeout(refreshSrcUI, 0));
+refreshSrcUI();
+
+// ---------------------------------------------------------------- 拖拽上传
+function dropWire(dropId, inputId, fnId, onSet){
+  const d = $(dropId), inp = $(inputId);
+  const accept = () => { inp.click(); };
+  d.addEventListener('click', accept);
+  inp.addEventListener('change', () => { if(inp.files[0]) set(inp.files[0]); });
+  ['dragenter','dragover'].forEach(ev =>
+    d.addEventListener(ev, e => { e.preventDefault(); d.classList.add('hot'); }));
+  ['dragleave','drop'].forEach(ev =>
+    d.addEventListener(ev, e => { e.preventDefault(); d.classList.remove('hot'); }));
+  d.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0]; if(!f) return;
+    inp.files = e.dataTransfer.files;   // 保持与表单一致
+    set(f);
+  });
+  function set(f){
+    $(fnId).textContent = f.name + '  (' + (f.size/1048576).toFixed(1) + ' MB)';
+    d.classList.add('has');
+    if(onSet) onSet(f);
+  }
+}
+dropWire('#dropMedia', '#media', '#fnMedia');
+dropWire('#dropTrack', '#track', '#fnTrack');
+
+$('#lyricsFile').addEventListener('change', async e => {
+  const f = e.target.files[0]; if(!f) return;
+  $('#lyrics').value = await f.text();
+  $('#fnLyrics').textContent = '已载入：' + f.name;
+});
+$('#btnClearLyrics').addEventListener('click', () => {
+  $('#lyrics').value = ''; $('#lyricsFile').value = ''; $('#fnLyrics').textContent = '';
+});
+
+// ---------------------------------------------------------------- 滑块回显
+const bindVal = (id, out, fmt = v => v) =>
+  $(id).addEventListener('input', e => $(out).textContent = fmt(e.target.value));
+bindVal('#quality', '#qVal');
+bindVal('#fontSize', '#fsVal');
+bindVal('#leadMs', '#leadVal');
+bindVal('#tailMs', '#tailVal');
+
+// ---------------------------------------------------------------- 日志
+function logLine(t, isErr){
+  const el = $('#log');
+  const span = document.createElement('div');
+  if(isErr) span.className = 'e';
+  span.textContent = t;
+  el.appendChild(span);
+  el.scrollTop = el.scrollHeight;
+}
+
+function setProgress(p, stage){
+  const pct = Math.round(p * 100);
+  $('#barFill').style.width = pct + '%';
+  $('#pctTxt').textContent = pct + '%';
+  if(stage) $('#stageTxt').textContent = stage;
+}
+
+// ---------------------------------------------------------------- 开始生成
+$('#btnRun').addEventListener('click', async () => {
+  const media = $('#media').files[0];
+  const lyrics = $('#lyrics').value.trim();
+  const lf = $('#lyricsFile').files[0];
+  const useAsr = (SRC === 'asr');
+  if(!media){ alert('请先选择视频或音频文件'); return; }
+  if(!lyrics && !lf && !useAsr){
+    alert('请粘贴歌词、选择歌词文件，或把「歌词来源」切到「③ 没歌词 · 自动转写」'); return;
+  }
+
+  const fd = new FormData();
+  fd.append('media', media);
+  fd.append('alignment_profile', $('#alignmentProfile').value);
+  if(lf && !useAsr) fd.append('lyrics_file', lf);
+  if(lyrics && !useAsr) fd.append('lyrics_text', lyrics);
+  try { fd.append('rules', JSON.stringify(collectRules())); }
+  catch(e) { showErr(e.message); return; }
+  fd.append('whisper_model', $('#whisperModel').value);
+  fd.append('vocal_guide', $('#useVocalGuide').checked ? '1' : '0');
+  fd.append('align_on_vocals', $('#useAlignVocals').checked ? '1' : '0');
+  fd.append('align_dual', $('#useDual').checked ? '1' : '0');
+  if(useAsr) fd.append('asr', '1');
+  if(SRC === 'sofa'){
+    fd.append('sofa', '1');
+  } else if(SRC === 'whisper'){
+    fd.append('whisper', '1');
+  }
+  const tk = $('#track').files[0]; if(tk) fd.append('audio_track', tk);
+  fd.append('vocal_mode', VOCAL);
+  fd.append('lang', LANG);
+  fd.append('demucs', $('#demucs').value);
+  fd.append('backend', $('#backend').value);
+  fd.append('timed_mode', $('#timedMode').value);
+  fd.append('encoder', $('#encoder').value);
+  fd.append('quality', $('#quality').value);
+  fd.append('separate', $('#separate').checked ? '1' : '0');
+  fd.append('options', JSON.stringify(styleOptions()));
+
+  $('#errBox').classList.add('hidden');
+  $('#resultCard').classList.add('hidden');
+  $('#tuneCard').classList.add('hidden');
+  $('#log').textContent = '';
+  setProgress(0, '上传中…');
+  $('#btnRun').disabled = true;
+  $('#btnCancel').disabled = false;
+
+  let job;
+  try {
+    const r = await fetch('/api/run', { method:'POST', body: fd });
+    const j = await r.json();
+    if(j.error){ throw new Error(j.error); }
+    job = j.job;
+  } catch(e){
+    $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
+    showErr('启动失败：' + e.message); return;
+  }
+  JOB = job;
+  logLine('任务 ' + job + ' 已创建');
+  watch(job);
+});
+
+function styleOptions(){
+  return {
+    font: $('#font').value,
+    font_size: parseInt($('#fontSize').value),
+    sung_color: $('#sung').value,
+    unsung_color: $('#unsung').value,
+    next_line: $('#nextLine').checked,
+    lead_ms: parseInt($('#leadMs').value),
+    tail_ms: parseInt($('#tailMs').value),
+    group_same_unit: $('#groupUnit').checked,
+  };
+}
+
+// ---------------------------------------------------------------- 对齐规则（高级选项）
+const AUTO_FIELDS = new Set(['boundary_limit', 'start_snap', 'clamp_tails_per_line',
+  'tail_extend', 'tail_gain', 'extend_min_p', 'conf_low', 'vocal_thr']);
+function renderRules(){
+  if(!window.RULE_META) return;
+  const mode = $('#alignmentProfile').value;
+  const fields = $('#ruleFields'); fields.replaceChildren();
+  Object.entries(RULE_META.rule_schema).forEach(([key, spec]) => {
+    if(mode === 'automatic' && !AUTO_FIELDS.has(key)) return;
+    const label = document.createElement('label');
+    label.textContent = spec.label + ' ';
+    const input = document.createElement('input'); input.dataset.rule = key;
+    const value = RULE_META.rule_profiles[mode][key];
+    if(spec.type === 'boolean'){
+      input.type = 'checkbox'; input.checked = value; input.style.width = 'auto';
+    } else {
+      input.type = 'number'; input.min = spec.min; input.max = spec.max;
+      input.step = spec.step; input.value = value; input.style.width = '85px';
+    }
+    label.appendChild(input); fields.appendChild(label);
+  });
+}
+$('#alignmentProfile').addEventListener('change', renderRules);
+$('#resetRules').addEventListener('click', renderRules);
+const advRules = $('#advRules'), ruleHelp = $('#ruleHelp');
+advRules.addEventListener('toggle', () => ruleHelp.classList.toggle('hidden', !advRules.open));
+$('#closeRuleHelp').addEventListener('click', () => {
+  ruleHelp.classList.add('hidden');
+  advRules.open = false;
+});
+function collectRules(){
+  const r = {};
+  document.querySelectorAll('[data-rule]').forEach(c => {
+    if(!c.checkValidity()) throw new Error('请检查高级参数范围');
+    r[c.dataset.rule] = c.type === 'checkbox' ? c.checked : Number(c.value);
+  });
+  return r;
+}
+
+function watch(job){
+  if(ES) ES.close();
+  ES = new EventSource('/api/events?job=' + encodeURIComponent(job));
+  ES.onmessage = ev => {
+    const d = JSON.parse(ev.data);
+    setProgress(d.progress, d.lines.length ? stripStamp(d.lines[d.lines.length-1]) : null);
+    d.lines.forEach(l => {
+      logLine(l, l.includes('失败') || l.includes('!!'));
+    });
+    if(d.asr_lrc) showAsrDraft(d.asr_lrc, null);
+    if(d.state === 'done' && d.result){ finish(d.result); ES.close(); ES = null; }    if(d.state === 'error'){ $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
+      showErr(d.error || '未知错误'); ES.close(); ES = null; }
+    if(d.state === 'cancelled'){ $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
+      setProgress(0, '已取消'); ES.close(); ES = null; }
+  };
+  ES.onerror = () => { /* 服务器关闭流时静默 */ };
+}
+const stripStamp = s => (s || '').replace(/^\d{2}:\d{2}:\d{2}\s+/, '');
+
+function showErr(msg){
+  const b = $('#errBox');
+  b.textContent = msg;
+  b.classList.remove('hidden');
+  logLine(msg, true);
+}
+
+// ---------------------------------------------------------- ASR 歌词草稿
+function showAsrDraft(lrc, info){
+  $('#asrBox').classList.remove('hidden');
+  $('#asrDraft').value = lrc || '';
+  if(info){
+    const cov = info.coverage != null ? (info.coverage * 100).toFixed(1) + '%' : '—';
+    $('#asrInfo').textContent =
+      `语言 ${info.language || '?'} · 对齐单元 ${info.units ?? '—'} · `
+      + `文本还原覆盖 ${cov} · 时长 ${(info.audio_dur || 0).toFixed(1)}s · `
+      + `转写 ${(info.asr_sec || 0).toFixed(1)}s`;
+  }
+}
+
+$('#btnCancel').addEventListener('click', async () => {
+  if(!JOB) return;
+  await fetch('/api/cancel', { method:'POST', body: JSON.stringify({ job: JOB }) });
+  logLine('已请求取消…');
+});
+
+// ---------------------------------------------------------------- 结果
+async function finish(res){
+  $('#btnRun').disabled = false;
+  $('#btnCancel').disabled = true;
+  setProgress(1, '完成');
+
+  const base = '/files/' + JOB + '/';
+  const v = $('#player');
+  v.src = base + encodeURIComponent(res.video) + '?t=' + Date.now();
+  v.load();
+
+  const dl = $('#dlBox');
+  dl.innerHTML = '';
+  [['成片视频', res.video], ['ASS 字幕', res.ass], ['SRT 字幕', res.srt],
+   ['对齐数据', res.align],
+   ['whisper 对齐 LRC', (res.whisper_files||[]).find(n => n.endsWith('.lrc'))],
+   ['whisper 纯文本歌词', (res.whisper_files||[]).find(n => n.endsWith('.plain.txt'))],
+   ['whisper 词级数据', (res.whisper_files||[]).find(n => n.endsWith('.json'))],
+   ['ASR 歌词草稿 (LRC)', (res.asr_files||[]).find(n => n.endsWith('.lrc'))],
+   ['ASR 纯文本歌词', (res.asr_files||[]).find(n => n.endsWith('.plain.txt'))],
+   ['ASR 歌词 SRT', (res.asr_files||[]).find(n => n.endsWith('.srt'))]
+  ].forEach(([label, name]) => {
+    if(!name) return;
+    const a = document.createElement('a');
+    a.href = base + encodeURIComponent(name) + '?download=1';
+    a.textContent = '↓ ' + label;
+    a.setAttribute('download', name);
+    dl.appendChild(a);
+  });
+  $('#resultCard').classList.remove('hidden');
+  TUNE_VERSION=0;TUNE_LOOP=null;
+  const initial=document.createElement('option');initial.value='0';initial.textContent='原始版本';initial.dataset.video=$('#player').src;
+  $('#tuneVersion').replaceChildren(initial);
+
+  const st = res.stats || {};
+  const h = st.health || {};
+  const cells = [
+    ['歌词行数', st.lines], ['token 数', st.tokens], ['语言', st.lang],
+    ['音频时长', (st.audio_sec||0).toFixed(1) + ' s'],
+    ['处理耗时', (st.elapsed_sec||0).toFixed(1) + ' s'],
+    ['实时倍速', (st.rtf||0).toFixed(2) + '×'],
+    ['对齐来源', st.align_source], ['输出音轨', st.output_audio],
+    ['编码器', st.encoder],
+  ];
+  $('#statBox').innerHTML = cells.map(([k,v]) =>
+    `<div><b>${escapeText(v ?? '—')}</b><span>${k}</span></div>`).join('');
+
+  const hb = $('#healthBadge');
+  const nOverlap = (h.overlap_pairs||[]).length, nNon = (h.nonmonotonic_lines||[]).length;
+  hb.textContent = `防重叠自检 ${h.ok ? '通过' : '异常'} · 重叠 ${nOverlap} · 逆序 ${nNon}`;
+  hb.className = 'badge ' + (h.ok ? 'ok' : 'bad');
+
+  logLine(`完成：${res.video}`);
+  if(res.asr_files && res.asr_files.length){
+    fetch(base + encodeURIComponent(res.asr_files[0]))
+      .then(r => r.text())
+      .then(t => showAsrDraft(t, res.asr_info))
+      .catch(() => {});
+  }
+  if(res.whisper_files && res.whisper_files.length){
+    const wl = (res.whisper_files||[]).find(n => n.endsWith('.lrc'));
+    const wi = res.whisper_info || {};
+    fetch(base + encodeURIComponent(wl))
+      .then(r => r.text())
+      .then(t => {
+        $('#whisperBox').classList.remove('hidden');
+        $('#whisperDraft').value = t;
+        const s = wi.suspect_lines || [];
+        $('#whisperInfo').textContent =
+          `语言 ${wi.language || '?'} · 模型 ${wi.model || '?'} · ` +
+          `词 ${wi.words ?? '?'} / 行 ${wi.lines ?? '?'} · ` +
+          `重排 ${wi.overlong_fixed_lines ?? 0} + 断档 ${wi.reflowed_lines ?? 0} · ` +
+          `能量引导 ${wi.vocal_guide ? '已启用' : '未启用'} · ` +
+          (s.length ? `⚠ 低置信行（建议复核）：${s.map(x => '#' + (x + 1)).join('、')}` : '无明显低置信行');
+      })
+      .catch(() => {});
+  }
+  await loadVersions(res.version || 0);
+  await loadAlign(res.version || '');
+}
+
+async function refreshHistory(){
+  $('#historyCount').textContent='扫描中…';
+  try {
+    const d=await (await fetch('/api/history')).json();
+    if(d.error)throw new Error(d.error);
+    HISTORY=d.records;$('#historyCount').textContent=`${HISTORY.length} 条`;
+    renderHistory();
+  }catch(e){$('#historyCount').textContent='扫描失败：'+e.message;}
+}
+function renderHistory(){
+  const list=$('#historyList');list.replaceChildren();
+  const query=$('#historySearch').value.toLowerCase();
+  for(const record of HISTORY.filter(r=>(r.title+' '+r.path).toLowerCase().includes(query))){
+    const item=document.createElement('div');item.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)';
+    const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.dataset.job=record.job;check.style.cssText='width:auto;margin-top:4px';
+    const title=document.createElement('div');title.textContent=record.title;
+    const note=document.createElement('div');note.className='hint';note.style.overflowWrap='anywhere';note.textContent=`${record.path} · ${record.versions.length} 个版本 · ${new Date(record.created*1000).toLocaleString()}${record.error?' · '+record.error:''}`;
+    const button=document.createElement('button');button.className='mini';button.textContent=record.result?(record.editable?'打开并继续编辑':'查看结果'):'未完成 / 无成片';
+    button.disabled=!record.result||EDITING||$('#btnRun').disabled;
+    button.onclick=async()=>{
+      if(EDITING||$('#btnRun').disabled)return;
+      try{if(ES){ES.close();ES=null;} JOB=record.job;EDITABLE=record.editable;await finish(record.result);$('#resultCard').scrollIntoView({behavior:'smooth'});}
+      catch(e){showErr('打开历史失败：'+e.message);}
+    };
+    const body=document.createElement('div');body.style.flex='1';body.append(title,note,button);
+    item.append(check,body);list.append(item);
+  }
+}
+function selectedHistory(){return [...document.querySelectorAll('.history-check:checked')].map(c=>c.dataset.job);}
+async function deleteHistory(jobs,label){
+  if(!jobs.length){$('#historyActionMsg').textContent='请先勾选历史记录。';return;}
+  if(!confirm(`确定永久删除${label}吗？视频、字幕、对齐数据和日志都会删除，无法恢复。`))return;
+  try{const r=await fetch('/api/history/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobs})});const d=await r.json();if(d.error)throw new Error(d.error);if(jobs.includes(JOB)){JOB=null;$('#resultCard').classList.add('hidden');$('#tuneCard').classList.add('hidden');}$('#historyActionMsg').textContent=`已删除 ${d.removed.length} 条历史记录。`;await refreshHistory();}catch(e){$('#historyActionMsg').textContent='删除失败：'+e.message;}
+}
+$('#selectAllHistory').onclick=()=>{const checks=[...document.querySelectorAll('.history-check')];const all=checks.length&&checks.every(c=>c.checked);checks.forEach(c=>c.checked=!all);};
+$('#deleteSelectedHistory').onclick=()=>deleteHistory(selectedHistory(),'选中的历史记录');
+$('#clearHistory').onclick=()=>deleteHistory(HISTORY.map(r=>r.job),'全部历史记录');
+async function loadVersions(selected){
+  const d=await (await fetch('/api/versions?job='+encodeURIComponent(JOB))).json();
+  if(d.error)throw new Error(d.error);
+  EDITABLE=d.editable;
+  const select=$('#tuneVersion');select.replaceChildren();
+  for(const version of d.versions.filter(v=>v.video)){
+    const option=document.createElement('option');option.value=version.version;option.textContent=version.version?'版本 v'+version.version:'原始版本';
+    if(version.anchor_row!=null)option.textContent+=` · 第 ${version.anchor_row+1} 句锚点`;
+    option.dataset.video='/files/'+JOB+'/'+encodeURIComponent(version.video);select.append(option);
+  }
+  select.value=String(selected);
+  $('#btnRerender').disabled=!EDITABLE;$('#btnAnchor').disabled=!EDITABLE;
+}
+$('#refreshHistory').onclick=refreshHistory;
+$('#historySearch').oninput=renderHistory;
+
+// ---------------------------------------------------------------- 微调
+async function loadAlign(version=''){
+  if(!JOB) return;
+  let aj;
+  try { aj = await (await fetch('/api/align?job=' + JOB + (version ? '&v=' + encodeURIComponent(version) : ''))).json(); }
+  catch(e){ return; }
+  if(aj.error){ return; }
+  ALIGN = aj;
+  const anchors=$('#anchorRow');anchors.replaceChildren();
+  aj.lines.slice(0,-1).forEach((line,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`第 ${i+1} 句 · ${line.raw}`;anchors.append(o);});
+  const positions=$('#insertAfter');positions.replaceChildren();
+  aj.lines.forEach((line,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`第 ${i+1} 句 · ${line.raw}`;positions.append(o);});
+  $('#btnAnchor').disabled=!EDITABLE||aj.lines.length<2;
+  const opts=aj.options||{};
+  for(const [key,id] of [['sung_color','sung'],['unsung_color','unsung']]){
+    if(Array.isArray(opts[key]))$('#'+id).value='#'+opts[key].map(v=>Number(v).toString(16).padStart(2,'0')).join('');
+    else if(opts[key])$('#'+id).value=opts[key];
+  }
+  for(const [key,id] of Object.entries({font:'font',font_size:'fontSize',outline:'outline',margin_v:'marginV',lead_ms:'leadMs',tail_ms:'tailMs',next_line:'nextLine',group_same_unit:'groupUnit'})){
+    const input=$('#'+id);if(input&&opts[key]!=null){if(input.type==='checkbox')input.checked=opts[key];else input.value=opts[key];}
+  }
+  TUNE_VERSION=Number(version)||0;TUNE_LOOP=null;$('#loopInfo').textContent='';
+  const currentHealth=aj.health||{};
+  $('#healthBadge').textContent=`当前${TUNE_VERSION?' v'+TUNE_VERSION:'原始版'} · 结构自检 ${currentHealth.ok?'通过':'需检查'}`;
+  $('#healthBadge').className='badge '+(currentHealth.ok?'ok':'bad');
+  const evidence = aj.diagnostics || {lines:[]};
+  const missing=evidence.missing_input_rows||[],alert=$('#missingLyricAlert');
+  alert.classList.toggle('hidden',!missing.length);
+  alert.textContent=missing.length?`发现 ${missing.length} 行输入歌词没有生成字幕：原歌词第 ${missing.map(r=>r.row).join('、')} 行。请确认现场是否漏唱；需要保留时可在下方插入并定位。`:'';
+  const diagnosticRows = (evidence.lines||[]).map((r,i)=>({...r,tokens:aj.lines[i]?.tokens}));
+  AlignmentDiagnostics.mount($('#alignmentDiagnostics'), {...evidence,lines:diagnosticRows}, $('#player'));
+  const tb = $('#tuneBody');
+  tb.innerHTML = aj.lines.map((ln, i) => `
+    <tr data-tune-row="${i}">
+      <td class="num">${i+1}</td>
+      <td class="txt"><details><summary>${escapeText(ln.raw)}</summary><div style="max-height:230px;overflow:auto;margin-top:8px">${(ln.tokens||[]).map((t,j)=>`<label style="display:flex;align-items:center;gap:8px;margin:5px 0"><span style="min-width:38px">${escapeText(t.disp||t.text)}</span><span class="hint">${fmtT(t.start)}–${fmtT(t.end)}</span><input aria-label="第${i+1}行第${j+1}字词偏移毫秒" type="number" step="10" placeholder="0 ms" data-token="${i}:${j}" style="width:95px;margin-left:auto"></label>`).join('')}</div></details></td>
+      <td><input type="number" min="0" step="0.001" value="${ln.start}" data-bound-start="${i}" aria-label="第${i+1}句起点秒"><div class="hint">${fmtT(ln.start)}</div></td>
+      <td><input type="number" min="0" step="0.001" value="${ln.end}" data-bound-end="${i}" aria-label="第${i+1}句终点秒"><div class="hint">${fmtT(ln.end)}</div></td>
+      <td><input type="number" step="10" placeholder="0" data-line="${i}"></td>
+      <td><button class="mini" data-seek="${ln.start}">▶</button><button class="mini" data-loop="${i}" title="循环试听这一句">↻</button></td>
+    </tr>`).join('');
+  $('#tuneCard').classList.remove('hidden');
+  updatePlayingLine(false);
+
+  tb.querySelectorAll('button[data-seek]').forEach(b =>
+    b.addEventListener('click', () => {
+      const v = $('#player');
+      TUNE_LOOP=null;$('#loopInfo').textContent='';
+      const t = parseFloat(b.dataset.seek);
+      v.currentTime = t;
+      v.play();
+      v.scrollIntoView({behavior:'smooth', block:'center'});
+    }));
+  tb.querySelectorAll('[data-loop]').forEach(b=>b.onclick=()=>{
+    const i=Number(b.dataset.loop),ln=aj.lines[i],v=$('#player');
+    TUNE_LOOP={start:Math.max(0,ln.start-1),end:Math.min(v.duration||Infinity,ln.end+1)};
+    $('#loopInfo').textContent=`循环第 ${i+1} 句（前后各1秒）`;v.currentTime=TUNE_LOOP.start;v.play().catch(()=>{});
+  });
+
+  const ow = (aj.options && aj.options.warp) || {};
+  $('#rerenderMsg').textContent = TUNE_VERSION ? `正在编辑微调版 v${TUNE_VERSION}；下一次修改会基于此版本。` : ow.applied
+    ? `已用 ${ow.anchors} 个行级锚点把时间吸附到歌词时间戳。`
+    : '未使用时间戳吸附（歌词无时间戳，或已指定忽略）。';
+}
+const fmtT = s => {
+  if(s == null) return '—';
+  const m = Math.floor(s/60), r = s - m*60;
+  return m + ':' + r.toFixed(2).padStart(5,'0');
+};
+
+async function submitEdit(anchorRow=null,insertion=null){
+  if(!JOB||!EDITABLE||EDITING){ return; }
+  const offs = {};
+  const bounds = {};
+  const tokenOffs = {};
+  document.querySelectorAll('#tuneBody input[data-token]').forEach(i=>{const v=Number(i.value);if(Number.isFinite(v)&&v!==0)tokenOffs[i.dataset.token]=v;});
+  document.querySelectorAll('#tuneBody input[data-line]').forEach(i => {
+    const v = parseFloat(i.value);
+    if(!isNaN(v) && v !== 0) offs[i.dataset.line] = v;
+  });
+  for(let i=0;i<ALIGN.lines.length;i++){
+    if(anchorRow!==null&&i>anchorRow)continue;
+    const a=$(`[data-bound-start="${i}"]`),b=$(`[data-bound-end="${i}"]`);
+    const start=Number(a.value),end=Number(b.value),original=ALIGN.lines[i];
+    if(!a.value||!b.value||!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start){
+      $('#rerenderMsg').textContent=`第 ${i+1} 句：请输入有效起止时间，终点必须晚于起点。`;a.focus();return;
+    }
+    if(start!==original.start||end!==original.end){
+      const shift=(offs[i]||0)/1000;
+      bounds[i]={start:start+shift,end:end+shift};delete offs[i];
+    }
+  }
+  if(anchorRow!==null){
+    for(const key of Object.keys(offs))if(Number(key)>anchorRow)delete offs[key];
+    for(const key of Object.keys(tokenOffs))if(Number(key.split(':')[0])>anchorRow)delete tokenOffs[key];
+  }
+  EDITING=true;
+  for(const id of ['btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=true;
+  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=true);
+  renderHistory();
+  $('#rerenderMsg').textContent = anchorRow===null?'重新渲染中…':'正在以人工锚点重新分析后续音频并生成版本，请保持页面打开…';
+  try {
+    const r = await fetch('/api/rerender', {
+      method:'POST',
+      body: JSON.stringify({ job: JOB, base_version:TUNE_VERSION, anchor_row:anchorRow, line_insertion:insertion, line_bounds:bounds, line_offsets: offs, token_offsets:tokenOffs, options: styleOptions() })
+    });
+    const d = await r.json();
+    if(d.error){ throw new Error(d.error); }
+    const base = '/files/' + JOB + '/';
+    const name = d.video.split(/[\\/]/).pop();
+    const v = $('#player');
+    v.src = base + encodeURIComponent(name) + '?t=' + Date.now();
+    v.load();
+    TUNE_LOOP=null;
+    const option=document.createElement('option');option.value=String(d.version);option.textContent=`微调版 v${d.version}`;option.dataset.video=v.src;$('#tuneVersion').append(option);$('#tuneVersion').value=String(d.version);
+    // 同时把下载区指向新版本
+    const dl = $('#dlBox');
+    const a = document.createElement('a');
+    a.href = base + encodeURIComponent(name) + '?download=1';
+    a.textContent = '↓ 微调版 v' + d.version;
+    a.setAttribute('download', name);
+    dl.prepend(a);
+    const h = d.health || {};
+    $('#healthBadge').textContent = `防重叠自检 ${h.ok ? '通过' : '异常'}`;
+    $('#healthBadge').className = 'badge ' + (h.ok ? 'ok' : 'bad');
+    $('#rerenderMsg').textContent = `已生成第 ${d.version} 版（编码器 ${d.encoder}）。`;
+    (d.logs||[]).forEach(l => logLine(l));
+    await loadAlign(d.version);
+    await loadVersions(d.version);
+    await refreshHistory();
+    if(insertion){$('#insertText').value='';$('#insertStart').value='';$('#insertEnd').value='';$('#insertMsg').textContent='插入完成，已生成版本 v'+d.version+'。';}
+  } catch(e){
+    $('#rerenderMsg').textContent = '失败：' + e.message;
+  }
+  EDITING=false;
+  for(const id of ['btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=false;
+  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=false);
+  renderHistory();
+}
+$('#btnRerender').onclick=()=>submitEdit();
+$('#btnAnchor').onclick=()=>{if($('#anchorRow').value!=='')submitEdit(Number($('#anchorRow').value));};
+$('#insertMode').onchange=()=>$('#insertManual').classList.toggle('hidden',$('#insertMode').value!=='manual');
+$('#btnInsert').onclick=()=>{
+  const text=$('#insertText').value.trim(),mode=$('#insertMode').value,after=Number($('#insertAfter').value);
+  if(!text){$('#insertMsg').textContent='请输入要插入的歌词。';$('#insertText').focus();return;}
+  const insertion={after_row:after,text,mode};
+  if(mode==='manual'){
+    insertion.start=Number($('#insertStart').value);insertion.end=Number($('#insertEnd').value);
+    if(!$('#insertStart').value||!$('#insertEnd').value||!Number.isFinite(insertion.start)||!Number.isFinite(insertion.end)||insertion.start<0||insertion.end<=insertion.start){$('#insertMsg').textContent='请输入有效的起点和终点，终点必须晚于起点。';return;}
+  }
+  $('#insertMsg').textContent=mode==='auto'?'正在重新分析插入点之后的音频…':'正在按指定时间生成…';submitEdit(null,insertion);
+};
+
+$('#btnReset').addEventListener('click', () => {
+  document.querySelectorAll('#tuneBody input').forEach(i => {
+    if(i.dataset.boundStart!==undefined)i.value=ALIGN.lines[Number(i.dataset.boundStart)].start;
+    else if(i.dataset.boundEnd!==undefined)i.value=ALIGN.lines[Number(i.dataset.boundEnd)].end;
+    else i.value='';
+  });
+});
+function updatePlayingLine(jump=false){
+  if(!ALIGN?.lines?.length)return;
+  const t=$('#player').currentTime,lines=ALIGN.lines;
+  let index=lines.findIndex(l=>l.start<=t&&t<l.end),near=false;
+  if(index<0){near=true;index=lines.reduce((best,l,i)=>Math.min(Math.abs(l.start-t),Math.abs(l.end-t))<Math.min(Math.abs(lines[best].start-t),Math.abs(lines[best].end-t))?i:best,0);}
+  const row=$(`[data-tune-row="${index}"]`);if(!row)return;
+  const changed=!row.classList.contains('playing-line');
+  $('#tuneBody').querySelectorAll('.playing-line').forEach(r=>r.classList.remove('playing-line'));row.classList.add('playing-line');
+  $('#playingLineInfo').textContent=`${near?'间奏 / 最近':'当前'} · 第 ${index+1} 句`;
+  if(jump){row.scrollIntoView({behavior:'smooth',block:'center'});row.querySelector('[data-bound-start]').focus({preventScroll:true});}
+  else if(changed&&$('#followPlayingLine').checked&&!$('#tuneBody').contains(document.activeElement)){
+    const box=row.closest('.tblwrap');box.scrollTop+=row.getBoundingClientRect().top-box.getBoundingClientRect().top-box.clientHeight/2;
+  }
+}
+$('#jumpPlayingLine').onclick=()=>updatePlayingLine(true);
+$('#followPlayingLine').onchange=()=>updatePlayingLine(false);
+$('#player').addEventListener('timeupdate',()=>updatePlayingLine(false));
+$('#player').addEventListener('seeked',()=>updatePlayingLine(false));
+$('#stopLoop').onclick=()=>{TUNE_LOOP=null;$('#loopInfo').textContent='';};
+$('#tuneSpeed').onchange=()=>{$('#player').playbackRate=Number($('#tuneSpeed').value);};
+$('#player').addEventListener('timeupdate',()=>{const v=$('#player');if(TUNE_LOOP&&v.currentTime>=TUNE_LOOP.end)v.currentTime=TUNE_LOOP.start;});
+$('#tuneVersion').onchange=async()=>{const s=$('#tuneVersion'),v=$('#player');TUNE_LOOP=null;v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();await loadAlign(Number(s.value)||'');};
+</script>
+</body>
+</html>

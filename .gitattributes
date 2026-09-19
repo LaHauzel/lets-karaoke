@@ -1,0 +1,17 @@
+* text=auto
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+*.bat text eol=crlf
+*.wav binary
+*.mp3 binary
+*.mp4 binary
+*.mkv binary
+*.mov binary
+*.pt binary
+*.ckpt binary
+*.safetensors binary
+*.zip binary
