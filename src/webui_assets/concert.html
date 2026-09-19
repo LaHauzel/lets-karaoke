@@ -9,7 +9,7 @@
 <section class="card"><div class="heading"><h2>本地切割记录</h2><button id="refresh" class="small">刷新</button></div><div id="history" class="history">正在读取…</div></section>
 </aside><article>
 <section class="card"><div class="heading"><h2 id="videoTitle">03 / 试听与复核</h2><span class="tag">分析版本 <select id="version" aria-label="分析版本" style="width:auto"><option>—</option></select></span><span id="duration" class="tag">尚未载入</span></div><video id="player" controls preload="metadata"></video>
-<div class="transport"><button id="back">后退 5 秒</button><output id="playTime">00:00:00.000</output><button id="forward">前进 5 秒</button><button id="split">在播放位置拆分</button></div>
+<div class="transport"><button id="back">后退 5 秒</button><output id="playTime">00:00:00.000</output><button id="forward">前进 5 秒</button><button id="split">在播放位置拆分</button><button id="merge">删除边界并合并</button></div>
 <canvas id="waveform" height="90" tabindex="0" aria-label="整场音量概览；点击定位，拖动蓝线调整边界，双击边界合并片段"></canvas><p class="hint">点击空白处定位；拖动蓝色边界调整时间；双击边界或选中后按 Delete 合并相邻片段。也可以用“在播放位置拆分”。所有操作会立即同步下方时间表。</p></section>
 <section class="card"><div class="heading"><h2>04 / 分段时间表 <span id="count"></span></h2><button id="save">保存调整</button></div>
 <p class="notice" id="notice">自动分段是待复核草稿。可修改名称与时间、取消不需要的片段，或合并误切的相邻片段。</p><div id="reviewNotes" class="hint"></div>
