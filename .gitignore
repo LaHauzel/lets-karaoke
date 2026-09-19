@@ -1,0 +1,49 @@
+# Local Python and tooling state
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Downloaded model weights and caches
+models/
+*.ckpt
+*.pt
+*.pth
+*.safetensors
+*.bin
+hf_cache/
+torch_cache/
+
+# User media and generated output
+out/
+*.mp3
+*.mp4
+*.wav
+*.flac
+*.m4a
+*.aac
+*.ogg
+*.webm
+*.avi
+*.mov
+*.mkv
+*.lrc
+*.srt
+*.ass
+
+# Local logs, exports, and history
+*.log
+*.jsonl
+.history/
+local_history/
+*.local.*
+
+# Editors and OS files
+.venv/
+venv/
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+Desktop.ini
