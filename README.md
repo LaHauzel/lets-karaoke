@@ -28,11 +28,10 @@
 
 - Windows 11（当前主要验证环境）。
 - Python 3.11 或更高版本。
-- NVIDIA GPU、可用 CUDA 环境，以及匹配的 PyTorch/torchaudio。当前安装脚本使用 CUDA 12.8 wheels。
 - FFmpeg 和 FFprobe，并且二者都在 `PATH` 中。
-- 足够的磁盘空间保存模型缓存和导出文件。模型权重不随仓库提供。
+- 足够的磁盘空间保存依赖、模型缓存和导出文件。模型权重不随仓库提供。
 
-CPU-only 环境不是当前默认安装脚本的目标环境。首次运行前可检查环境：
+只有 Whisper、Qwen、SOFA 和完整环境需要 NVIDIA GPU、可用 CUDA 和匹配的 PyTorch/torchaudio；演唱会切割最小环境不需要 GPU。当前 GPU 安装脚本使用 CUDA 12.8 wheels。首次运行前可检查环境：
 
 ```bat
 python src\check_environment.py
@@ -42,7 +41,17 @@ python src\check_environment.py
 
 建议在专用的 Python 3.11 环境中运行项目。启动脚本使用当前命令行中的 `python`。
 
-Windows 用户也可以直接运行 `setup_guide.bat`。它提供交互式菜单，可依次完成环境检查、依赖安装、模型下载和 WebUI 启动；完整排查步骤见 [Windows 安装与故障排查指南](docs/SETUP_WINDOWS.md)。
+Windows 用户建议运行 `setup_guide.bat`。它按以下顺序提供可选环境，并在每一步说明功能和显示安装进度：
+
+| 选项 | 环境 | 适用功能 | GPU/模型 |
+| --- | --- | --- | --- |
+| 1 | Whisper 字幕环境 | 已有歌词对齐、字幕渲染、可选人声分离 | GPU；Whisper 模型 |
+| 2 | 演唱会切割最小环境 | 长视频分析、音量轴编辑、FFmpeg 分段导出 | 无 GPU、无模型 |
+| 3 | Qwen 完整字幕环境 | Whisper 加 Qwen 对齐、ASR 草稿和 Wav2Vec2 | GPU；Whisper/Qwen 模型 |
+| 4 | SOFA 歌声对齐环境 | Whisper 行定位和 SOFA 音素级歌声对齐 | GPU；Whisper/SOFA checkpoint |
+| 5 | 完整环境 | 全部字幕后端和演唱会切割功能 | GPU；按需下载全部模型 |
+
+完整排查步骤见 [Windows 安装与故障排查指南](docs/SETUP_WINDOWS.md)。只做演唱会切割时选择第 2 项即可，不需要部署完整环境。
 
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
@@ -50,16 +59,17 @@ cd lets-karaoke
 setup.bat
 ```
 
-`setup.bat` 会检查 Python 版本，安装匹配的 GPU PyTorch/torchaudio，并安装 `requirements.txt` 中的依赖。请先安装 FFmpeg，并确认 `ffmpeg -version` 和 `ffprobe -version` 均可执行。
+`setup.bat` 是兼容入口，会安装完整环境。按功能安装时也可以直接运行 `call setup_profile.bat whisper|concert|qwen|sofa|full`。`requirements.txt` 是完整环境的聚合入口；轻量部署应使用 profile 脚本。请先安装 FFmpeg，并确认 `ffmpeg -version` 和 `ffprobe -version` 均可执行。
 
 模型可以按需下载到项目的 `models/` 目录：
 
 ```bat
+python src\fetch_whisper.py --model large-v3
 python src\fetch_models.py --list
 python src\fetch_models.py
 ```
 
-使用已有歌词进行对齐时至少需要 ForcedAligner 模型；没有歌词、需要 ASR 草稿时还需要 ASR 模型。模型下载渠道和模型名称以 `src/fetch_models.py` 为准。
+Whisper 模型下载到 `models/whisper`。使用已有歌词进行 Qwen 对齐时需要 ForcedAligner；没有歌词、需要 ASR 草稿时还需要 ASR。SOFA checkpoint 当前需要手动放到 `models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt`。模型下载渠道和模型名称以 `src/fetch_models.py` 为准。
 
 ## 启动 WebUI
 

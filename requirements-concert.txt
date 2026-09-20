@@ -1,0 +1,3 @@
+# Minimal environment for concert video analysis and segmentation.
+# No GPU, Whisper, Qwen, SOFA, or model weights are required.
+-r requirements-base.txt

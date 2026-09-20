@@ -1,0 +1,11 @@
+# SOFA singing-alignment profile: Whisper profile plus SOFA runtime dependencies.
+-r requirements-whisper.txt
+pykakasi==2.3.0
+lightning>=2.6,<2.7
+textgrid==1.6.1
+tensorboardX>=2.6,<2.7
+h5py>=3.10
+einops>=0.6
+PyYAML>=6
+matplotlib>=3.7
+pandas>=2

@@ -1,0 +1,7 @@
+# Whisper subtitle profile: known-lyrics alignment and subtitle rendering.
+-r requirements-base.txt
+soundfile>=0.13,<0.14
+librosa>=0.11,<0.12
+demucs==4.0.1
+openai-whisper==20250625
+stable-ts==2.19.1
