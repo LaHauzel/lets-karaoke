@@ -1,5 +1,7 @@
 # lets-karaoke
 
+[English](README.en.md)
+
 本地运行的歌词对齐、卡拉 OK 字幕生成与演唱会视频分段工具，面向 Windows 用户。项目使用本地模型和 FFmpeg 处理媒体，不依赖在线 API。
 
 > **项目状态**：功能可以本地运行，但仍在持续迭代。自动对齐和演唱会分段都应在导出前人工复核。
@@ -39,6 +41,8 @@ python src\check_environment.py
 ## 安装
 
 建议在专用的 Python 3.11 环境中运行项目。启动脚本使用当前命令行中的 `python`。
+
+Windows 用户也可以直接运行 `setup_guide.bat`。它提供交互式菜单，可依次完成环境检查、依赖安装、模型下载和 WebUI 启动；完整排查步骤见 [Windows 安装与故障排查指南](docs/SETUP_WINDOWS.md)。
 
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
