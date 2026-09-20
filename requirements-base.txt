@@ -1,0 +1,5 @@
+# Shared numeric/media dependencies for local WebUI profiles.
+# Python 3.11+. FFmpeg and FFprobe are external Windows programs.
+numpy>=1.26,<2
+scipy>=1.11,<2
+pywin32>=311; sys_platform == 'win32'

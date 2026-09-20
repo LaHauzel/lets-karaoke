@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions EnableDelayedExpansion
+setlocal EnableExtensions
 cd /d "%~dp0"
 chcp 65001 >nul
 set "PYTHONUTF8=1"
@@ -12,83 +12,132 @@ echo ================================================================
 echo   lets-karaoke Windows setup assistant
 echo ================================================================
 echo.
-echo   [1] Detailed environment check
-echo   [2] Install or repair Python dependencies
-echo   [3] Download ForcedAligner model  ^(~1.8 GB^)
-echo   [4] Download ASR model            ^(~4.7 GB^)
-echo   [5] Download all models
-echo   [6] Show model status
-echo   [7] Start WebUI
-echo   [8] Open setup guide
+echo   [1] Install Whisper subtitle environment
+echo       Known-lyrics alignment, subtitle rendering, optional vocal separation
+echo   [2] Install concert segmentation minimum environment
+echo       Long-video analysis, waveform editing, and FFmpeg export; no GPU/models
+echo   [3] Install Qwen full subtitle environment
+echo       Whisper plus Qwen ForcedAligner, ASR drafts, and Wav2Vec2
+echo   [4] Install SOFA singing alignment environment
+echo       Whisper line windows plus SOFA phoneme-level singing alignment
+echo   [5] Install full environment
+echo       Whisper, Qwen, SOFA, Demucs, and all supported subtitle backends
+echo   [6] Download Whisper model              ^(~3 GB^)
+echo   [7] Download Qwen models                ^(~6.5 GB^)
+echo   [8] Show environment and model status
+echo   [9] Start WebUI
+echo   [10] Open setup guide
 echo   [Q] Quit
 echo.
 set "answer="
-set /p "answer=Choose an option [1-8/Q]: "
+set /p "answer=Choose an option [1-10/Q]: "
 
-if /i "%answer%"=="1" call :check & goto menu
-if /i "%answer%"=="2" call :install & goto menu
-if /i "%answer%"=="3" call :download aligner & goto menu
-if /i "%answer%"=="4" call :download asr & goto menu
-if /i "%answer%"=="5" call :download all & goto menu
-if /i "%answer%"=="6" call :models & goto menu
-if /i "%answer%"=="7" call :launch & goto menu
-if /i "%answer%"=="8" call :guide & goto menu
+if /i "%answer%"=="1" call :profile whisper & goto menu
+if /i "%answer%"=="2" call :profile concert & goto menu
+if /i "%answer%"=="3" call :profile qwen & goto menu
+if /i "%answer%"=="4" call :profile sofa & goto menu
+if /i "%answer%"=="5" call :profile full & goto menu
+if /i "%answer%"=="6" call :download_whisper & goto menu
+if /i "%answer%"=="7" call :download_qwen & goto menu
+if /i "%answer%"=="8" call :models & goto menu
+if /i "%answer%"=="9" call :launch & goto menu
+if /i "%answer%"=="10" call :guide & goto menu
 if /i "%answer%"=="q" goto done
 echo Invalid option.
 timeout /t 2 >nul
 goto menu
 
-:check
+:profile
 cls
-echo [1/1] Checking Python, packages, FFmpeg, CUDA, models, and disk...
-echo Missing models are warnings; missing runtime requirements are failures.
+if /i "%~1"=="whisper" (
+  echo [Whisper subtitle environment]
+  echo Function: known-lyrics Whisper/stable-ts alignment, subtitle rendering,
+  echo           and optional Demucs vocal separation.
+) else if /i "%~1"=="concert" (
+  echo [Concert segmentation minimum environment]
+  echo Function: long-video audio analysis, interactive boundaries, and FFmpeg export.
+  echo           This profile does not install CUDA, Whisper, Qwen, SOFA, or models.
+) else if /i "%~1"=="qwen" (
+  echo [Qwen full subtitle environment]
+  echo Function: Whisper subtitle tools plus Qwen ForcedAligner, ASR drafts,
+  echo           and Wav2Vec2 alignment support.
+) else if /i "%~1"=="sofa" (
+  echo [SOFA singing alignment environment]
+  echo Function: Whisper line windows followed by SOFA phoneme-level singing alignment.
+) else (
+  echo [Full environment]
+  echo Function: Whisper, Qwen, SOFA, Demucs, and all supported subtitle backends.
+)
 echo.
-python src\check_environment.py
+echo The installer will show pip download progress and run a matching check afterwards.
 echo.
-pause
-exit /b
-
-:install
-cls
-echo [1/3] Installing or repairing GPU PyTorch, torchaudio, and dependencies...
-echo pip will display download progress. This can take several minutes.
-echo.
-call setup.bat
+call setup_profile.bat %~1
 set "rc=%errorlevel%"
 echo.
-if not "%rc%"=="0" (
-  echo Installation did not complete. Fix the reported item and try again.
-) else (
-  echo Dependencies installed. Run the detailed check next.
-)
+if "%rc%"=="0" (echo Profile installation completed.) else (echo Profile installation failed; fix the reported item and retry.)
 pause
 exit /b
 
-:download
+:download_whisper
 cls
+echo [Whisper model]
+echo Function: supplies the local Whisper checkpoint used by the Whisper subtitle
+echo           profile and as the timing pre-pass for Qwen/SOFA workflows.
+echo Download size depends on the selected checkpoint; large-v3 is about 3 GB.
 echo.
-if /i "%~1"=="all" (
-  echo [download] Fetching all models. Existing complete models are skipped.
-  echo            The two models require about 6.5 GB in total.
-  echo.
-  python src\fetch_models.py
-) else (
-  echo [download] Fetching the %~1 model. Existing files are reused.
-  echo.
-  python src\fetch_models.py --only %~1
-)
+python src\fetch_whisper.py --model large-v3
 set "rc=%errorlevel%"
 echo.
 if not "%rc%"=="0" echo Download did not complete. Run this option again to resume.
-if "%rc%"=="0" echo Download complete.
+if "%rc%"=="0" echo Whisper model is ready.
+pause
+exit /b
+
+:download_qwen
+cls
+echo [Qwen models]
+echo Function: ForcedAligner provides word/character timing; ASR provides lyric
+echo           drafts when no lyric file is available.
+echo   [A] ForcedAligner       (~1.8 GB)
+echo   [B] ASR                 (~4.7 GB)
+echo   [C] Both                (~6.5 GB)
+echo.
+set "model_choice="
+set /p "model_choice=Choose a model [A-C]: "
+if /i "%model_choice%"=="a" goto qwen_aligner
+if /i "%model_choice%"=="b" goto qwen_asr
+if /i "%model_choice%"=="c" goto qwen_both
+echo Invalid model option.
+set "rc=1"
+goto qwen_done
+:qwen_aligner
+python src\fetch_models.py --only aligner
+set "rc=%errorlevel%"
+goto qwen_done
+:qwen_asr
+python src\fetch_models.py --only asr
+set "rc=%errorlevel%"
+goto qwen_done
+:qwen_both
+python src\fetch_models.py
+set "rc=%errorlevel%"
+:qwen_done
+echo.
+if "%rc%"=="0" echo Qwen model download complete.
+if not "%rc%"=="0" echo Download did not complete. Run this option again to resume.
 pause
 exit /b
 
 :models
 cls
-echo Current model status:
+echo Current environment and model status:
+echo.
+python src\check_environment.py --profile concert
 echo.
 python src\fetch_models.py --list
+echo.
+if exist "models\whisper\large-v3.pt" (echo [OK] Whisper large-v3: models\whisper\large-v3.pt) else (echo [--] Whisper large-v3: not downloaded)
+if exist "models\sofa\multilingual\pretrained_multilingual_singing\v1.0.0_multilingual_singing.ckpt" (echo [OK] SOFA checkpoint found.) else (echo [--] SOFA checkpoint: place it under models\sofa\multilingual\pretrained_multilingual_singing\)
 echo.
 pause
 exit /b

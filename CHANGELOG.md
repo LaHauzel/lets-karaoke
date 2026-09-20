@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 按功能拆分 Windows 部署 profile：Whisper 字幕、演唱会切割最小环境、Qwen 完整字幕、SOFA 歌声对齐和完整环境；安装助手按该顺序显示用途、依赖和模型下载步骤。
+- 新增 `requirements-concert.txt`、`requirements-base.txt`、`requirements-whisper.txt`、`requirements-qwen.txt`、`requirements-sofa.txt` 和 `requirements-full.txt`，并保留 `requirements.txt` 作为完整环境聚合入口。
+- 新增 Whisper checkpoint 下载器和 profile-aware 环境检查；演唱会切割 profile 不安装 CUDA、字幕模型或 GPU 依赖。
+
 - 新增 `setup_guide.bat` 交互式 Windows 安装助手、详细环境诊断和安装排查指南；新增英文 README。
 
 - 新增工作台标签页：原字幕工坊保持独立，切换不重载页面或丢失表单。

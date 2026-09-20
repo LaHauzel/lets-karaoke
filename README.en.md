@@ -28,11 +28,10 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 
 - Windows 11 (the primary validation environment).
 - Python 3.11 or later.
-- An NVIDIA GPU with a working CUDA driver and matching PyTorch/torchaudio. The current installer uses CUDA 12.8 wheels.
 - FFmpeg and FFprobe available on `PATH`.
-- Sufficient disk space for model caches and exports. Model weights are not included in this repository.
+- Sufficient disk space for dependencies, model caches, and exports. Model weights are not included in this repository.
 
-CPU-only environments are not the target of the default installer. Run the diagnostic before starting:
+Whisper, Qwen, SOFA, and full profiles require an NVIDIA GPU, working CUDA, and matching PyTorch/torchaudio; the concert segmentation minimum profile does not need a GPU. The GPU installer uses CUDA 12.8 wheels. Run the diagnostic before starting:
 
 ```bat
 python src\check_environment.py
@@ -48,23 +47,34 @@ cd lets-karaoke
 setup.bat
 ```
 
-`setup.bat` checks Python, installs the matching GPU PyTorch/torchaudio wheels, and installs `requirements.txt`. Install FFmpeg separately and verify:
+`setup.bat` is a compatibility entry point for the full environment. For a focused install, run `call setup_profile.bat whisper|concert|qwen|sofa|full`. `requirements.txt` aggregates the full environment; use the profile script for a minimal deployment. Install FFmpeg separately and verify:
 
 ```bat
 ffmpeg -version
 ffprobe -version
 ```
 
-For an interactive Windows setup flow, run `setup_guide.bat`. It provides detailed diagnostics, dependency repair, model downloads with downloader progress, model status, and WebUI launch. See [Windows setup and troubleshooting](docs/SETUP_WINDOWS.en.md).
+For an interactive Windows setup flow, run `setup_guide.bat`. It presents these profiles in order and explains the function of each step while showing installer progress:
+
+| Option | Profile | Use case | GPU/models |
+| --- | --- | --- | --- |
+| 1 | Whisper subtitles | Known-lyrics alignment, subtitle rendering, optional separation | GPU; Whisper model |
+| 2 | Concert segmentation minimum | Long-video analysis, waveform editing, FFmpeg segment export | No GPU or models |
+| 3 | Qwen full subtitles | Whisper plus Qwen alignment, ASR drafts, and Wav2Vec2 | GPU; Whisper/Qwen models |
+| 4 | SOFA singing alignment | Whisper line windows and SOFA phoneme-level alignment | GPU; Whisper/SOFA checkpoint |
+| 5 | Full environment | All subtitle backends and concert segmentation | GPU; download models as needed |
+
+See [Windows setup and troubleshooting](docs/SETUP_WINDOWS.en.md). If you only need concert segmentation, choose option 2 instead of installing the full environment.
 
 Download the local models when needed:
 
 ```bat
+python src\fetch_whisper.py --model large-v3
 python src\fetch_models.py --list
 python src\fetch_models.py
 ```
 
-The ForcedAligner model is required for supplied-lyrics alignment. The ASR model is also needed for lyric drafts without a lyric file. Model sources and names are defined in `src/fetch_models.py`.
+The Whisper checkpoint is stored under `models/whisper`. The ForcedAligner model is required for Qwen supplied-lyrics alignment; the ASR model is needed for lyric drafts without a lyric file. The SOFA checkpoint must currently be placed at `models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt`. Model sources and names are defined in `src/fetch_models.py`.
 
 ## Start the WebUI
 

@@ -1,0 +1,4 @@
+# Full supported environment: Qwen and SOFA subtitle profiles plus utilities.
+-r requirements-qwen.txt
+-r requirements-sofa.txt
+rapidfuzz>=3,<4
