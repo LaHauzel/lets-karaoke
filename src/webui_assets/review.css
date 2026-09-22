@@ -1,0 +1,9 @@
+.review-box{margin:16px 0;border:1px solid #476478;background:#142630;border-radius:12px;padding:16px}
+.review-box[data-status=needs_fix]{border-color:#ba656e;background:#301e27}
+.review-box[data-status=needs_review]{border-color:#a88c50;background:#302b1f}
+.review-box h3{font-size:16px;margin:0 0 8px}.review-box ul{margin:8px 0;padding-left:20px}.review-box p{margin:6px 0}
+.wave-box{margin:14px 0;border:1px solid var(--border,#36414e);border-radius:12px;padding:14px}
+.wave-tools{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin:10px 0}
+.wave-tools select{max-width:100%;width:auto}.wave-tools button{width:auto;padding:7px 12px}
+.wave-box canvas{display:block;width:100%;height:170px;touch-action:none;border-radius:8px;background:#0a1720;cursor:crosshair}
+.wave-box canvas:focus-visible{outline:2px solid #64c9dc}.wave-box .hint{overflow-wrap:anywhere}

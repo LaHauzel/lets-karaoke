@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "example_only": true,
+  "recording_id": "fictional-demo-001",
+  "audio": {"file": "your-audio.wav", "sha256": null, "duration_s": 12.0},
+  "language": "zh",
+  "split": "test",
+  "annotation": {"revision": 1, "method": "manual_listening", "reviewed": false},
+  "lines": [
+    {"id": "L001", "text": "把今天写成一段旋律", "status": "sung", "start": 1.0, "end": 3.2, "boundary_uncertainty_ms": 50, "tags": ["clean"]},
+    {"id": "L002", "text": "让明天接住新的声音", "status": "sung", "start": 4.0, "end": 6.0, "boundary_uncertainty_ms": 100, "tags": ["long_note"]},
+    {"id": "L003", "text": "这一句在这个版本没有唱出", "status": "not_sung", "start": null, "end": null, "tags": ["omitted"]},
+    {"id": "L004", "text": "远处传来新的回声", "status": "uncertain", "start": 8.0, "end": 10.0, "boundary_uncertainty_ms": 300, "tags": ["backing_vocals"]}
+  ]
+}

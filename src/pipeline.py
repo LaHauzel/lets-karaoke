@@ -830,6 +830,9 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         doc = parse_lyrics(raw_lyrics)
         if not doc.lines:
             raise RuntimeError("歌词解析后为空，请检查内容格式")
+        if not (job_dir/'input_lyrics.json').exists():
+            (job_dir/'input_lyrics.json').write_text(json.dumps(
+                [line.text for line in doc.lines], ensure_ascii=False), encoding='utf-8')
         joined = "\n".join(l.text for l in doc.lines)
         if cfg.lang == "auto":
             lang, detail = detect_language(joined)
@@ -1018,6 +1021,10 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             } for ln in lines],
         }, ensure_ascii=False, indent=2), encoding="utf-8")
         res.align_json = str(aj)
+        from alignment_review import attach_review
+        review = attach_review(job_dir, json.loads(aj.read_text(encoding='utf-8')),
+                               job_dir/'acceptance.json')['acceptance']
+        step(.89, f"自动验收：{review['label']}（输入 {review['input_lines']} 行，输出 {review['output_lines']} 行）")
 
         # ---------------------------------------------------------- 7 输出音轨
         out_audio: str | None = None
@@ -1109,6 +1116,7 @@ class RestyleRequest:
     anchor_row: int | None = None
     line_bounds: dict = field(default_factory=dict)  # row -> absolute start/end seconds
     line_insertion: dict | None = None
+    retry_suspects: bool = False
 
 
 def _ass_opt_from(opts: dict) -> AssOptions:
@@ -1188,6 +1196,30 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
     req = req or RestyleRequest()
     jd = Path(job_dir)
     job, lines = load_job(jd, req.base_version)
+    retry_evidence = None
+    retry_report = None
+    if req.retry_suspects:
+        if req.anchor_row is not None or req.line_insertion or req.line_bounds or req.line_offsets_ms or req.token_offsets_ms:
+            raise ValueError('请先保存或撤销手动调整，再单独运行疑难句重试')
+        from alignment_review import attach_review
+        from alignment_retry import retry_lines
+        from asr_lyrics import AsrLine, Segment
+        current = json.loads((jd/(f'align_v{req.base_version}.json' if req.base_version else 'align.json')).read_text(encoding='utf-8'))
+        evidence = attach_review(jd, current)['diagnostics']
+        scores = [r.get('confidence') for r in evidence.get('lines', [])]
+        retry_config = json.loads((jd/'retry_config.json').read_text(encoding='utf-8')) if (jd/'retry_config.json').exists() else {}
+        acoustic = [AsrLine(l.raw,l.start,l.end,[Segment(t.disp,t.start,t.end) for t in l.tokens],
+                           scores[i] if i<len(scores) and scores[i] is not None else 0) for i,l in enumerate(lines)]
+        refined, retry_evidence, retry_report = retry_lines(acoustic, evidence,
+            [jd/'in/vg/vocals.wav',jd/'in/audio_44k.wav',Path(job['media'])],
+            float(job['media_info']['duration']), {'ja':'Japanese','zh':'Chinese','en':'English'}.get(job.get('lang'),job.get('lang')),
+            model=retry_config.get('model','large-v3'),device=retry_config.get('device','cuda'),progress=prog)
+        if not retry_report['accepted']:
+            return {'ok':True,'unchanged':True,'retry':retry_report}
+        for i,(old,new) in enumerate(zip(acoustic,refined)):
+            if old is not new:
+                lines[i] = KaraokeLine(raw=new.text,start=new.start,end=new.end,
+                    tokens=[KaraokeToken(text=t.text,disp=t.text,start=t.start,end=t.end) for t in new.segments])
 
     prog(0.05, "载入对齐结果")
     for i, ln in enumerate(lines):
@@ -1204,7 +1236,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
                     t.end += dd
     # 逐 token 调整后可能逆序，重新整理
     for i, ln in enumerate(lines):
-        if req.anchor_row is not None and not req.line_offsets_ms.get(i, req.line_offsets_ms.get(str(i), 0)) and not any(
+        if (req.anchor_row is not None or req.retry_suspects) and not req.line_offsets_ms.get(i, req.line_offsets_ms.get(str(i), 0)) and not any(
                 req.token_offsets_ms.get(f'{i}:{j}', req.token_offsets_ms.get(f'{i}_{j}', 0)) for j in range(len(ln.tokens))):
             continue  # Human-anchor runs must preserve unchanged prefix timings exactly.
         prev = -1e9
@@ -1293,7 +1325,9 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         "anchor_row": req.anchor_row,
         "line_bounds": req.line_bounds,
         "line_insertion": req.line_insertion,
-        "operation": ("insert_" + str(req.line_insertion.get('mode'))) if req.line_insertion else ("anchor_realign" if req.anchor_row is not None else "retime"),
+        "review_evidence": retry_evidence,
+        "retry": retry_report,
+        "operation": 'local_retry' if req.retry_suspects else (("insert_" + str(req.line_insertion.get('mode'))) if req.line_insertion else ("anchor_realign" if req.anchor_row is not None else "retime")),
         "created": time.time(),
         "health": health,
         "offsets": {str(k): v for k, v in req.line_offsets_ms.items()},
@@ -1309,6 +1343,9 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         } for ln in lines],
     }, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    from alignment_review import attach_review
+    attach_review(jd, json.loads((jd/f'align_v{ver}.json').read_text(encoding='utf-8')),
+                  jd/f'acceptance_v{ver}.json')
     return {"ok": True, "version": ver, "video": str(out_video),
             "ass": str(ass_path), "srt": str(srt_path), "health": health,
             "encoder": used_enc}
