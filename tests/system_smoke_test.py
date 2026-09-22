@@ -21,6 +21,7 @@ args = argparse.ArgumentParser()
 args.add_argument('--lang', choices=('zh', 'en', 'ja'), default='zh')
 args.add_argument('--asr', action='store_true')
 args.add_argument('--sofa', action='store_true')
+args.add_argument('--media', type=Path, help='optional external media file')
 args = args.parse_args()
 asr_mode = args.asr
 if asr_mode and args.sofa:
@@ -29,9 +30,12 @@ lang = args.lang
 manifest = json.loads((ROOT / 'data/synth/manifest.json').read_text(encoding='utf-8'))
 lang_data = manifest['langs'][lang]
 variant = 'gapped_mix' if lang != 'ja' else 'legato_mix'
-media = ROOT / lang_data['variants'][variant]['audio']
+media = args.media.resolve() if args.media else ROOT / lang_data['variants'][variant]['audio']
+if not media.exists():
+    raise SystemExit(f'media file not found: {media}')
 webui.OUT_ROOT = ROOT / 'out' / 'system_smoke'
-job_id = 'asr_chained' if asr_mode else 'automatic'
+job_prefix = 'asr' if asr_mode else 'automatic'
+job_id = f'{job_prefix}_{lang}_{media.stem}'
 job = webui.Job(job_id, webui.OUT_ROOT / job_id)
 job.dir.mkdir(parents=True, exist_ok=True)
 cfg = {
@@ -49,6 +53,7 @@ if asr_mode:
 webui._run_job(job, cfg)
 report = {'state': job.state, 'error': job.error, 'logs': job.logs,
           'whisper_info': job.whisper_info, 'asr_info': job.asr_info, 'result': job.result}
-(webui.OUT_ROOT / ('asr_report.json' if asr_mode else 'report.json')).write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
+(job.dir / ('asr_report.json' if asr_mode else 'report.json')).write_text(
+    json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
 print(json.dumps(report, ensure_ascii=False, indent=2))
 sys.exit(job.state != 'done')
