@@ -2,6 +2,8 @@
 
 [English](README.en.md)
 
+**第一次使用？从 [图解使用手册](docs/USER_GUIDE.md) 开始：安装、模型下载、网页操作、对齐纠错与演唱会切割。**
+
 本地运行的歌词对齐、卡拉 OK 字幕生成与演唱会视频分段工具，面向 Windows 用户。项目使用本地模型和 FFmpeg 处理媒体，不依赖在线 API。
 
 > **项目状态**：功能可以本地运行，但仍在持续迭代。自动对齐和演唱会分段都应在导出前人工复核。
@@ -39,7 +41,7 @@ python src\check_environment.py
 
 ## 安装
 
-建议在专用的 Python 3.11 环境中运行项目。启动脚本使用当前命令行中的 `python`。
+建议使用系统默认 Python 3.11。安装与启动脚本使用当前命令行中的 `python`，依赖直接安装到该 Python，不创建虚拟环境，不依赖 ComfyUI。
 
 Windows 用户建议运行 `setup_guide.bat`。它按以下顺序提供可选环境，并在每一步说明功能和显示安装进度：
 
@@ -56,7 +58,7 @@ Windows 用户建议运行 `setup_guide.bat`。它按以下顺序提供可选环
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
 cd lets-karaoke
-setup.bat
+setup_guide.bat
 ```
 
 `setup.bat` 是兼容入口，会安装完整环境。按功能安装时也可以直接运行 `call setup_profile.bat whisper|concert|qwen|sofa|full`。`requirements.txt` 是完整环境的聚合入口；轻量部署应使用 profile 脚本。请先安装 FFmpeg，并确认 `ffmpeg -version` 和 `ffprobe -version` 均可执行。

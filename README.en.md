@@ -1,5 +1,7 @@
 # lets-karaoke
 
+New to the project? See the [illustrated user guide (Chinese)](docs/USER_GUIDE.md) for installation, model downloads, subtitle editing, and concert segmentation.
+
 [中文](README.md)
 
 A local-first toolkit for lyric alignment, karaoke subtitle rendering, and concert video segmentation on Windows. Media processing uses local models and FFmpeg; no online API is required.
@@ -39,12 +41,12 @@ python src\check_environment.py
 
 ## Installation
 
-Use a dedicated Python 3.11 environment. The batch scripts use the `python` executable resolved from the current shell.
+Use the system-default Python 3.11. The batch scripts install into and run the `python` executable resolved from the current shell; they do not create a virtual environment or depend on ComfyUI.
 
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
 cd lets-karaoke
-setup.bat
+setup_guide.bat
 ```
 
 `setup.bat` is a compatibility entry point for the full environment. For a focused install, run `call setup_profile.bat whisper|concert|qwen|sofa|full`. `requirements.txt` aggregates the full environment; use the profile script for a minimal deployment. Install FFmpeg separately and verify:

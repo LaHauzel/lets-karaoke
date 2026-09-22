@@ -32,16 +32,46 @@ echo.
 set "answer="
 set /p "answer=Choose an option [1-10/Q]: "
 
-if /i "%answer%"=="1" call :profile whisper & goto menu
-if /i "%answer%"=="2" call :profile concert & goto menu
-if /i "%answer%"=="3" call :profile qwen & goto menu
-if /i "%answer%"=="4" call :profile sofa & goto menu
-if /i "%answer%"=="5" call :profile full & goto menu
-if /i "%answer%"=="6" call :download_whisper & goto menu
-if /i "%answer%"=="7" call :download_qwen & goto menu
-if /i "%answer%"=="8" call :models & goto menu
-if /i "%answer%"=="9" call :launch & goto menu
-if /i "%answer%"=="10" call :guide & goto menu
+if /i "%answer%"=="1" (
+  call :profile whisper
+  goto menu
+)
+if /i "%answer%"=="2" (
+  call :profile concert
+  goto menu
+)
+if /i "%answer%"=="3" (
+  call :profile qwen
+  goto menu
+)
+if /i "%answer%"=="4" (
+  call :profile sofa
+  goto menu
+)
+if /i "%answer%"=="5" (
+  call :profile full
+  goto menu
+)
+if /i "%answer%"=="6" (
+  call :download_whisper
+  goto menu
+)
+if /i "%answer%"=="7" (
+  call :download_qwen
+  goto menu
+)
+if /i "%answer%"=="8" (
+  call :models
+  goto menu
+)
+if /i "%answer%"=="9" (
+  call :launch
+  goto menu
+)
+if /i "%answer%"=="10" (
+  call :guide
+  goto menu
+)
 if /i "%answer%"=="q" goto done
 echo Invalid option.
 timeout /t 2 >nul
