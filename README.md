@@ -141,6 +141,22 @@ test.bat
 
 该脚本会编译 `src/` 和 `tools/`，然后运行对齐策略、历史版本、HTTP 接口和演唱会切割等回归测试。完整的 GPU 端到端测试需要已安装依赖并准备好模型，不包含在默认单元测试脚本中。
 
+GPU 环境下可以分别验证中文、英文和日文的带歌词流程。测试会覆盖纯文本歌词以及带行时间戳的 LRC：
+
+```bat
+python tests\e2e_p1.py --device cuda
+```
+
+无歌词流程会先用本地 ASR 生成草稿，再自动交给 Whisper 做二次对齐。可以按语言单独运行：
+
+```bat
+python tests\system_smoke_test.py --lang zh --asr
+python tests\system_smoke_test.py --lang en --asr
+python tests\system_smoke_test.py --lang ja --asr
+```
+
+ASR 草稿应先人工校对，再作为已知歌词重新对齐；草稿文本和自动分行不应直接视为最终结果。
+
 ## 项目结构
 
 ```text
