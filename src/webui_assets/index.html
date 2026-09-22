@@ -752,10 +752,14 @@ function showAsrDraft(lrc, info){
   $('#asrDraft').value = lrc || '';
   if(info){
     const cov = info.coverage != null ? (info.coverage * 100).toFixed(1) + '%' : '—';
+    const zero = info.zero_units != null ? `${info.zero_units} 个零宽单元` : '零宽单元 —';
+    const collapse = info.collapse_ratio != null
+      ? ` · 坍缩 ${(info.collapse_ratio * 100).toFixed(1)}%` : '';
     $('#asrInfo').textContent =
       `语言 ${info.language || '?'} · 对齐单元 ${info.units ?? '—'} · `
       + `文本还原覆盖 ${cov} · 时长 ${(info.audio_dur || 0).toFixed(1)}s · `
-      + `转写 ${(info.asr_sec || 0).toFixed(1)}s`;
+      + `转写 ${(info.infer_sec || info.asr_sec || 0).toFixed(1)}s · ${zero}${collapse}`
+      + ' · 草稿需人工校对';
   }
 }
 
