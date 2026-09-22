@@ -8,6 +8,7 @@ if errorlevel 1 exit /b 1
 
 python -m unittest ^
   tests.alignment_diagnostics_test ^
+  tests.alignment_acceptance_test ^
   tests.alignment_policy_test ^
   tests.anchor_history_test ^
   tests.history_delete_test ^

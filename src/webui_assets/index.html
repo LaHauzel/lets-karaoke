@@ -6,6 +6,8 @@
 <title>lets-karaoke · 卡拉OK字幕工坊</title>
 <link rel="stylesheet" href="/diagnostics.css">
 <script src="/diagnostics.js"></script>
+<link rel="stylesheet" href="/review.css">
+<script src="/lyric_waveform.js"></script>
 <style>
 :root{
   --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
@@ -217,6 +219,7 @@ details[open] summary:before{content:"▾ "}
         <input type="checkbox" id="useDual" checked style="width:auto">
         干声与混音双路对齐，自动选择结果
       </label>
+      <label style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="autoRetry" checked style="width:auto">疑难句有限重试（Whisper / 自动转写；最多3句）</label>
       <details id="advRules" style="margin:8px 0">
         <summary>高级参数（通常无需调整）</summary>
         <p class="hint">默认参数来自通用合成测试，通常无需调整。
@@ -421,6 +424,10 @@ details[open] summary:before{content:"▾ "}
         <span class="hint" id="playingLineInfo"></span>
       </div>
       <div class="dl" id="dlBox"></div>
+      <div id="acceptanceBox" class="review-box" role="status"></div>
+      <button class="ghost" id="btnRetry" style="width:auto">局部重试疑难句 · 生成新版本</button>
+      <p id="retryMsg" class="hint"></p>
+      <div id="waveformHost"></div>
       <div id="alignmentDiagnostics"></div>
       <details id="asrBox" class="hidden" style="margin-top:10px">
         <summary>ASR 自动转写的歌词草稿（可复制校对 / 直接改字幕）</summary>
@@ -486,7 +493,7 @@ details[open] summary:before{content:"▾ "}
 <script>
 const $ = (s) => document.querySelector(s);
 let JOB = null, ALIGN = null, ES = null;
-let TUNE_VERSION = 0, TUNE_LOOP = null;
+let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null;
 let HISTORY = [], EDITABLE = true, EDITING = false;
 const escapeText = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
@@ -627,6 +634,7 @@ $('#btnRun').addEventListener('click', async () => {
   fd.append('whisper_model', $('#whisperModel').value);
   fd.append('vocal_guide', $('#useVocalGuide').checked ? '1' : '0');
   fd.append('align_on_vocals', $('#useAlignVocals').checked ? '1' : '0');
+  fd.append('auto_retry', $('#autoRetry').checked ? '1' : '0');
   fd.append('align_dual', $('#useDual').checked ? '1' : '0');
   if(useAsr) fd.append('asr', '1');
   if(SRC === 'sofa'){
@@ -911,6 +919,17 @@ async function loadAlign(version=''){
   catch(e){ return; }
   if(aj.error){ return; }
   ALIGN = aj;
+  const acceptance=aj.acceptance||{},box=$('#acceptanceBox');box.replaceChildren();box.dataset.status=acceptance.status||'needs_review';
+  const heading=document.createElement('h3');heading.textContent='自动验收 · '+(acceptance.label||'尚无依据');box.append(heading);
+  const counts=document.createElement('p');counts.textContent=`输入 ${acceptance.input_lines??'未知'} 行 → 输出 ${acceptance.output_lines??aj.lines.length} 行 · ${acceptance.acoustic_lines??0} 句有当前声学依据`;box.append(counts);
+  const issueBox=document.createElement('details'),issueSummary=document.createElement('summary');issueSummary.textContent=`验收提示 · ${(acceptance.issues||[]).length} 项`;issueBox.append(issueSummary);
+  const list=document.createElement('ul');(acceptance.issues||[]).forEach(issue=>{const li=document.createElement('li');li.textContent=issue.message+(issue.rows?.length?'（行 '+issue.rows.slice(0,12).join('、')+(issue.rows.length>12?'…':'')+'）':'');list.append(li)});issueBox.append(list);if(acceptance.issues?.length)box.append(issueBox);
+  const tip=document.createElement('p');tip.className='hint';tip.textContent=acceptance.note||'';box.append(tip);
+  $('#btnRetry').disabled=!EDITABLE||EDITING;
+  const retry=aj.retry||aj.diagnostics?.retry;
+  $('#retryMsg').textContent=retry?`本轮尝试 ${retry.attempted} 句，接受 ${retry.accepted} 句。`:'先保存手动修改。只尝试可靠相邻句之间的短窗口，不会自动补写缺失歌词。';
+  if(retry?.items?.length){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看局部重试记录';details.append(summary);for(const item of retry.items){const p=document.createElement('p');p.textContent=`第 ${item.row} 行：${item.reason}`;details.append(p)}box.append(details);}
+
   const anchors=$('#anchorRow');anchors.replaceChildren();
   aj.lines.slice(0,-1).forEach((line,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`第 ${i+1} 句 · ${line.raw}`;anchors.append(o);});
   const positions=$('#insertAfter');positions.replaceChildren();
@@ -945,12 +964,19 @@ async function loadAlign(version=''){
       <td><button class="mini" data-seek="${ln.start}">▶</button><button class="mini" data-loop="${i}" title="循环试听这一句">↻</button></td>
     </tr>`).join('');
   $('#tuneCard').classList.remove('hidden');
+  WAVEFORM?.destroy();
+  WAVEFORM=LyricWaveform.mount($('#waveformHost'),{job:JOB,lines:aj.lines,player:$('#player'),
+    canEdit:()=>EDITABLE&&!EDITING,
+    onLoop:()=>{TUNE_LOOP=null;$('#loopInfo').textContent='波形选区循环';},
+    getBounds:i=>({start:Number($(`[data-bound-start="${i}"]`).value),end:Number($(`[data-bound-end="${i}"]`).value)}),
+    onBounds:(i,start,end)=>{$(`[data-bound-start="${i}"]`).value=start;$(`[data-bound-end="${i}"]`).value=end;$('#rerenderMsg').textContent=`第 ${i+1} 句波形边界已修改，尚未提交；点击应用并重新渲染。`;}});
+  tb.oninput=()=>WAVEFORM?.refresh();
   updatePlayingLine(false);
 
   tb.querySelectorAll('button[data-seek]').forEach(b =>
     b.addEventListener('click', () => {
       const v = $('#player');
-      TUNE_LOOP=null;$('#loopInfo').textContent='';
+      WAVEFORM?.stopLoop();TUNE_LOOP=null;$('#loopInfo').textContent='';
       const t = parseFloat(b.dataset.seek);
       v.currentTime = t;
       v.play();
@@ -958,7 +984,7 @@ async function loadAlign(version=''){
     }));
   tb.querySelectorAll('[data-loop]').forEach(b=>b.onclick=()=>{
     const i=Number(b.dataset.loop),ln=aj.lines[i],v=$('#player');
-    TUNE_LOOP={start:Math.max(0,ln.start-1),end:Math.min(v.duration||Infinity,ln.end+1)};
+    WAVEFORM?.stopLoop();TUNE_LOOP={start:Math.max(0,ln.start-1),end:Math.min(v.duration||Infinity,ln.end+1)};
     $('#loopInfo').textContent=`循环第 ${i+1} 句（前后各1秒）`;v.currentTime=TUNE_LOOP.start;v.play().catch(()=>{});
   });
 
@@ -973,7 +999,7 @@ const fmtT = s => {
   return m + ':' + r.toFixed(2).padStart(5,'0');
 };
 
-async function submitEdit(anchorRow=null,insertion=null){
+async function submitEdit(anchorRow=null,insertion=null,retry=false){
   if(!JOB||!EDITABLE||EDITING){ return; }
   const offs = {};
   const bounds = {};
@@ -999,18 +1025,23 @@ async function submitEdit(anchorRow=null,insertion=null){
     for(const key of Object.keys(offs))if(Number(key)>anchorRow)delete offs[key];
     for(const key of Object.keys(tokenOffs))if(Number(key.split(':')[0])>anchorRow)delete tokenOffs[key];
   }
+  if(retry&&(Object.keys(offs).length||Object.keys(bounds).length||Object.keys(tokenOffs).length)){
+    $('#retryMsg').textContent='请先应用并重新渲染，或清空偏移并还原起止时间，再运行局部重试。';return;
+  }
   EDITING=true;
-  for(const id of ['btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=true;
+  for(const id of ['btnRetry','btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=true;
   $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=true);
   renderHistory();
-  $('#rerenderMsg').textContent = anchorRow===null?'重新渲染中…':'正在以人工锚点重新分析后续音频并生成版本，请保持页面打开…';
+  $('#rerenderMsg').textContent = retry?'正在局部重试疑难句…':anchorRow===null?'重新渲染中…':'正在以人工锚点重新分析后续音频并生成版本，请保持页面打开…';
   try {
     const r = await fetch('/api/rerender', {
       method:'POST',
-      body: JSON.stringify({ job: JOB, base_version:TUNE_VERSION, anchor_row:anchorRow, line_insertion:insertion, line_bounds:bounds, line_offsets: offs, token_offsets:tokenOffs, options: styleOptions() })
+      body: JSON.stringify({ job: JOB, base_version:TUNE_VERSION, retry_suspects:retry, anchor_row:anchorRow, line_insertion:insertion, line_bounds:bounds, line_offsets: offs, token_offsets:tokenOffs, options: styleOptions() })
     });
     const d = await r.json();
     if(d.error){ throw new Error(d.error); }
+    if(d.unchanged){$('#retryMsg').textContent=`尝试 ${d.retry.attempted} 句，没有可安全替换的候选，保留当前版本。`;
+      $('#rerenderMsg').textContent=d.retry.items.map(i=>`第 ${i.row} 行：${i.reason}`).join('；')||'没有适合自动重试的句子。';return;}
     const base = '/files/' + JOB + '/';
     const name = d.video.split(/[\\/]/).pop();
     const v = $('#player');
@@ -1037,11 +1068,18 @@ async function submitEdit(anchorRow=null,insertion=null){
   } catch(e){
     $('#rerenderMsg').textContent = '失败：' + e.message;
   }
+  finally {
   EDITING=false;
-  for(const id of ['btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=false;
-  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=false);
+  for(const id of ['btnRetry','btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=false;
+  $('#btnRetry').disabled=!EDITABLE;
+  $('#btnRerender').disabled=!EDITABLE;
+  $('#btnInsert').disabled=!EDITABLE;
+  $('#btnAnchor').disabled=!EDITABLE||(ALIGN?.lines.length||0)<2;
+  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=!EDITABLE);
   renderHistory();
+  }
 }
+$('#btnRetry').onclick=()=>submitEdit(null,null,true);
 $('#btnRerender').onclick=()=>submitEdit();
 $('#btnAnchor').onclick=()=>{if($('#anchorRow').value!=='')submitEdit(Number($('#anchorRow').value));};
 $('#insertMode').onchange=()=>$('#insertManual').classList.toggle('hidden',$('#insertMode').value!=='manual');
@@ -1081,7 +1119,7 @@ $('#jumpPlayingLine').onclick=()=>updatePlayingLine(true);
 $('#followPlayingLine').onchange=()=>updatePlayingLine(false);
 $('#player').addEventListener('timeupdate',()=>updatePlayingLine(false));
 $('#player').addEventListener('seeked',()=>updatePlayingLine(false));
-$('#stopLoop').onclick=()=>{TUNE_LOOP=null;$('#loopInfo').textContent='';};
+$('#stopLoop').onclick=()=>{WAVEFORM?.stopLoop();TUNE_LOOP=null;$('#loopInfo').textContent='';};
 $('#tuneSpeed').onchange=()=>{$('#player').playbackRate=Number($('#tuneSpeed').value);};
 $('#player').addEventListener('timeupdate',()=>{const v=$('#player');if(TUNE_LOOP&&v.currentTime>=TUNE_LOOP.end)v.currentTime=TUNE_LOOP.start;});
 $('#tuneVersion').onchange=async()=>{const s=$('#tuneVersion'),v=$('#player');TUNE_LOOP=null;v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();await loadAlign(Number(s.value)||'');};

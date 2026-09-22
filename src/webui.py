@@ -196,7 +196,7 @@ def safe_name(n: str) -> str:
 
 
 def _run_job(job: Job, cfg_kwargs: dict) -> None:
-    from pipeline import ModelCache, PipelineConfig, AssOptions, run
+    from pipeline import ModelCache, PipelineConfig, AssOptions, run, _load_lyrics, parse_lyrics
 
     # 进度条分配：SOFA/whisper 对齐占前 35%，ASR 草稿占前 45%（三者互斥）
     need_sofa = bool(cfg_kwargs.get("sofa_align"))
@@ -218,6 +218,11 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
         job.state = "running"
         job.add(0.0, "任务启动")
     try:
+        if cfg_kwargs.get('lyrics_path') or (cfg_kwargs.get('lyrics_text') or '').strip():
+            original, _ = _load_lyrics(PipelineConfig(media=cfg_kwargs['media'],
+                lyrics_path=cfg_kwargs.get('lyrics_path'), lyrics_text=cfg_kwargs.get('lyrics_text') or ''))
+            (job.dir/'input_lyrics.json').write_text(json.dumps(
+                [r.text for r in parse_lyrics(original).lines], ensure_ascii=False), encoding='utf-8')
         if need_sofa:
             if cancel():
                 raise RuntimeError("cancelled")
@@ -605,6 +610,8 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
 
     lang = cfg_kwargs.get("lang", "auto")
     model_size = cfg_kwargs.get("whisper_model", "large-v3")
+    (job.dir/'retry_config.json').write_text(json.dumps({'model':model_size,
+        'device':cfg_kwargs.get('device','cuda')}), encoding='utf-8')
     use_vg = bool(cfg_kwargs.get("vocal_guide", True))
     use_align_vocals = bool(cfg_kwargs.get("align_on_vocals", True))
     use_dual = bool(cfg_kwargs.get("align_dual", True))
@@ -624,6 +631,10 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     rows = [l.strip() for l in lyrics.splitlines() if l.strip()]
     if not rows:
         raise RuntimeError("whisper 对齐需要歌词文本，但歌词为空")
+    from pipeline import parse_lyrics
+    rows = [line.text for line in parse_lyrics(lyrics).lines]
+    if not (job.dir/'input_lyrics.json').exists():
+        (job.dir/'input_lyrics.json').write_text(json.dumps(rows, ensure_ascii=False), encoding='utf-8')
 
     # 语言：显式指定优先，否则从歌词文本推断（比让 whisper 猜可靠）
     lang_map = {"zh": "Chinese", "en": "English", "ja": "Japanese"}
@@ -740,9 +751,17 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
                 job.add(0.34, f"[vocal-guide] 失败跳过：{type(e).__name__}: {e}")
 
     vg_rep = postprocess_lines(asr_lines, iv, user_rules, profile)
-    (job.dir / 'alignment_evidence.json').write_text(json.dumps(
-        explain(asr_lines, evidence_primary, evidence_alt, evidence_before, evidence_indices, iv, len(rows)),
-        ensure_ascii=False), encoding='utf-8')
+    evidence = explain(asr_lines, evidence_primary, evidence_alt, evidence_before, evidence_indices, iv, len(rows))
+    if cfg_kwargs.get('auto_retry', True):
+        import soundfile as sf
+        from alignment_retry import retry_lines
+        asr_lines, evidence, retry = retry_lines(asr_lines, evidence, [voc, audio],
+            sf.info(str(audio)).duration, wlang, model=model_size,
+            device=cfg_kwargs.get('device','cuda'), progress=wprog2, cancel=cancel)
+        (job.dir/'alignment_retry.json').write_text(json.dumps(retry, ensure_ascii=False, indent=2), encoding='utf-8')
+        with LOCK:
+            job.add(.34, f"[局部重试] 检查 {retry['attempted']} 句，接受 {retry['accepted']} 句；未达条件保留原结果")
+    (job.dir / 'alignment_evidence.json').write_text(json.dumps(evidence, ensure_ascii=False), encoding='utf-8')
     diag["postprocess"] = vg_rep
     diag["alignment_profile"] = profile
     diag["suspect_lines"] = [i for i, line in enumerate(asr_lines)
@@ -939,13 +958,16 @@ class Handler(BaseHTTPRequestHandler):
                     "rule_profiles": {p: resolve_rules(DEFAULT_RULES, profile=p)
                                       for p in ("balanced", "automatic", "legacy")},
                 })
-            if u.path in ('/diagnostics.js', '/diagnostics.css'):
+            if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
             if u.path == "/api/align":
                 return self._align(q.get("job", [""])[0],
                                    q.get("v", [""])[0])
+            if u.path == '/api/waveform':
+                from lyric_waveform import waveform
+                return self._json(waveform(saved_directory(q.get('job',[''])[0])))
             if u.path == "/api/jobs":
                 with LOCK:
                     return self._json(sorted(
@@ -1037,6 +1059,7 @@ class Handler(BaseHTTPRequestHandler):
         # 无歌词文件兜底：本地 ASR 自动转写成歌词草稿
         asr_mode = fields.get("asr") not in (None, "", "0", "false", "False")
         kwargs["asr_lyrics"] = asr_mode
+        kwargs['auto_retry'] = fields.get('auto_retry', '1') not in ('0','false','False','')
         if asr_mode:
             kwargs.pop("lyrics_path", None)
             kwargs["lyrics_text"] = ""
@@ -1150,9 +1173,8 @@ class Handler(BaseHTTPRequestHandler):
         if (jd/'job.json').exists():
             settings = json.loads((jd/'job.json').read_text(encoding='utf-8')).get('options', {})
             data['options'] = {**settings, **(data.get('options') or {})}
-        evidence = jd / 'alignment_evidence.json'
-        from alignment_diagnostics import attach
-        data = attach(data, json.loads(evidence.read_text(encoding='utf-8')) if evidence.exists() else {})
+        from alignment_review import attach_review
+        data = attach_review(jd, data)
         return self._json(data)
 
     def _api_rerender(self):
@@ -1172,6 +1194,7 @@ class Handler(BaseHTTPRequestHandler):
             anchor_row=d.get('anchor_row'),
             line_bounds=d.get('line_bounds') or {},
             line_insertion=d.get('line_insertion'),
+            retry_suspects=d.get('retry_suspects') is True,
             line_offsets_ms={int(k): float(v) for k, v in
                              (d.get("line_offsets") or {}).items()},
             token_offsets_ms={str(k): float(v) for k, v in
