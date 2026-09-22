@@ -46,6 +46,8 @@ CASES = [
     ("ja_clean", "ja", "gapped_clean", False, "text"),
     ("ja_mix", "ja", "legato_mix", True, "text"),
     ("zh_lrc", "zh", "gapped_clean", False, "lrc"),
+    ("en_lrc", "en", "gapped_clean", False, "lrc"),
+    ("ja_lrc", "ja", "gapped_clean", False, "lrc"),
 ]
 
 
