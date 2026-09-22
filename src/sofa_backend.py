@@ -219,7 +219,8 @@ def sofa_align_lyrics(vocals_wav: str, lyrics_lines: list[str], work_dir: Path,
            "--ckpt", str(CKPT), "--folder", str(work_dir),
            "--g2p", "Dictionary", "--dictionary", str(job_dict),
            "--mode", mode, "--out_formats", "textgrid", "--save_confidence"]
-    r = subprocess.run(cmd, capture_output=True, cwd=str(SOFA_DIR))
+    sofa_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    r = subprocess.run(cmd, capture_output=True, cwd=str(SOFA_DIR), env=sofa_env)
     log = ((r.stdout or b"") + b"\n===STDERR===\n" +
            (r.stderr or b"")).decode("utf-8", "replace")
     (work_dir / "_infer.log").write_text(log, encoding="utf-8")

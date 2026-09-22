@@ -4,6 +4,7 @@ Examples:
   python tests/system_smoke_test.py --lang zh
   python tests/system_smoke_test.py --lang en --asr
   python tests/system_smoke_test.py --lang ja --asr
+  python tests/system_smoke_test.py --lang ja --sofa
 """
 import argparse
 import json
@@ -19,8 +20,11 @@ import webui
 args = argparse.ArgumentParser()
 args.add_argument('--lang', choices=('zh', 'en', 'ja'), default='zh')
 args.add_argument('--asr', action='store_true')
+args.add_argument('--sofa', action='store_true')
 args = args.parse_args()
 asr_mode = args.asr
+if asr_mode and args.sofa:
+    raise SystemExit('--asr and --sofa cannot be combined')
 lang = args.lang
 manifest = json.loads((ROOT / 'data/synth/manifest.json').read_text(encoding='utf-8'))
 lang_data = manifest['langs'][lang]
@@ -33,7 +37,8 @@ job.dir.mkdir(parents=True, exist_ok=True)
 cfg = {
     'media': str(media),
     'lyrics_text': '\n'.join(lang_data['lyrics_lines']),
-    'whisper_align': True, 'whisper_model': 'base',
+    'whisper_align': not args.sofa, 'sofa_align': args.sofa,
+    'whisper_model': 'base',
     'vocal_guide': True, 'align_on_vocals': True, 'align_dual': True,
     'alignment_profile': 'balanced', 'lang': lang, 'device': 'cuda',
     'vocal_mode': 'keep', 'separate': True, 'demucs': 'htdemucs',

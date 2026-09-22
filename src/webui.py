@@ -438,7 +438,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
         job.add(0.35, f"[sofa] 细化分段 {n_cut} 段")
 
     # 第三步：SOFA 推理（窗口内 force 对齐，窗口已含完整演唱）
-    # 检查点用 multilingual（离线 pray 实测：行分段 + mora 键音素全命中）
+    # 使用 multilingual 检查点；行分段和 mora 音素由同一份字典生成。
     ckpt = ROOT / "models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt"
     jdict = seg_dir / "ja_job_dict.txt"
     cmd = [sys.executable,
@@ -446,7 +446,9 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
            "--folder", str(seg_dir), "--g2p", "Dictionary",
            "--dictionary", str(jdict), "--mode", "force",
            "--out_formats", "textgrid", "--save_confidence"]
-    r = subprocess.run(cmd, capture_output=True, cwd=str(ROOT / "tools/SOFA"))
+    sofa_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
+    r = subprocess.run(cmd, capture_output=True, cwd=str(ROOT / "tools/SOFA"),
+                       env=sofa_env)
     (seg_dir / "_infer.log").write_text(
         (r.stdout or b"").decode("utf-8", "replace") + "\n===STDERR===\n" +
         (r.stderr or b"").decode("utf-8", "replace"), encoding="utf-8")
@@ -578,7 +580,9 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
         job.add(0.35, f"[sofa] 细化完成 {rep['refined']}/{len(win)} 行"
                       + (f"（whisper 兜底 {len(rep['fallback'])} 行）"
                          if rep["fallback"] else ""))
-    (ROOT / "out" / "webui" / job.id / "sofa_diag.json").write_text(
+    diag_path = ROOT / "out" / "webui" / job.id / "sofa_diag.json"
+    diag_path.parent.mkdir(parents=True, exist_ok=True)
+    diag_path.write_text(
         json.dumps(job.sofa_info, ensure_ascii=False, indent=1), encoding="utf-8")
 
 

@@ -22,7 +22,17 @@ resample_transform_dict = {}
 def load_wav(path, device, sample_rate=None):
     global installed_torchaudio
     if installed_torchaudio:
-        waveform, sr = torchaudio.load(str(path))
+        try:
+            waveform, sr = torchaudio.load(str(path))
+        except (ImportError, RuntimeError) as exc:
+            # torchaudio 2.9 delegates decoding to optional TorchCodec.
+            # Fall back to librosa when that codec backend is unavailable.
+            print(f"torchaudio.load unavailable; falling back to librosa: {exc}")
+            installed_torchaudio = False
+    if not installed_torchaudio:
+        waveform, _ = librosa.load(path, sr=sample_rate, mono=True)
+        return torch.from_numpy(waveform).to(device)
+    else:
         if sample_rate != sr and sample_rate is not None:
             global resample_transform_dict
             if sr not in resample_transform_dict:
@@ -33,9 +43,5 @@ def load_wav(path, device, sample_rate=None):
             waveform = resample_transform_dict[sr](waveform)
 
         waveform = waveform[0].to(device)
-
-    else:
-        waveform, _ = librosa.load(path, sr=sample_rate, mono=True)
-        waveform = torch.from_numpy(waveform).to(device)
 
     return waveform
