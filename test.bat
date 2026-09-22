@@ -13,6 +13,7 @@ python -m unittest ^
   tests.history_delete_test ^
   tests.restyle_versions_test ^
   tests.webui_policy_test ^
+  tests.setup_menu_test ^
   tests.concert_splitter_test
 if errorlevel 1 exit /b 1
 

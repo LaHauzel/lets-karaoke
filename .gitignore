@@ -17,6 +17,8 @@ torch_cache/
 
 # User media and generated output
 out/
+# Private reports belong under out/; keep the previous report location untracked too.
+/docs/validation-report.html
 *.mp3
 *.mp4
 *.wav
