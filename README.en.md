@@ -166,7 +166,7 @@ out/                    local history and exports (not committed)
 
 ## License and third-party components
 
-This repository does not currently declare a single project-wide software license. Do not assume MIT, Apache-2.0, or another open-source license. Third-party dependencies, SOFA source, model weights, FFmpeg builds, and user media are governed by their own terms. Read [Dependency license review](docs/DEPENDENCY_LICENSES.md) before redistribution and generate a complete dependency inventory for the target deployment.
+Project-authored code is released under the MIT License; see the repository-root [LICENSE](LICENSE). Modules, direct dependencies, the optional SOFA backend, model weights, and external tools retain their own licenses. See [Project and third-party licenses](docs/LICENSES.md) and the [dependency license review](docs/DEPENDENCY_LICENSES.md). Before distributing a bundled application, verify the full dependency inventory and include the required notices for that build.
 
 Users are responsible for the rights to their songs, lyrics, concert videos, and other media. This project does not grant rights to use or redistribute those materials.
 
