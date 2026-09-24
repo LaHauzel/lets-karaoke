@@ -1007,7 +1007,9 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 "font": opt.font, "font_size": opt.font_size,
                 "sung_color": list(opt.sung_color),
                 "unsung_color": list(opt.unsung_color),
-                "next_line": opt.next_line, "lead_ms": opt.lead_ms,
+                "next_line": opt.next_line, "line_count": opt.line_count,
+                "position_x": opt.position_x, "position_y": opt.position_y,
+                "lead_ms": opt.lead_ms,
                 "tail_ms": opt.tail_ms, "min_gap_ms": opt.min_gap_ms,
                 "group_same_unit": opt.group_same_unit,
             },
@@ -1055,7 +1057,9 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 "sung_color": list(opt.sung_color),
                 "unsung_color": list(opt.unsung_color),
                 "outline": opt.outline, "margin_v": opt.margin_v,
-                "next_line": opt.next_line, "lead_ms": opt.lead_ms,
+                "next_line": opt.next_line, "line_count": opt.line_count,
+                "position_x": opt.position_x, "position_y": opt.position_y,
+                "lead_ms": opt.lead_ms,
                 "tail_ms": opt.tail_ms, "min_gap_ms": opt.min_gap_ms,
                 "group_same_unit": opt.group_same_unit,
             },
@@ -1129,6 +1133,10 @@ def _ass_opt_from(opts: dict) -> AssOptions:
         return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
 
     base = AssOptions()
+    show_following = bool(opts.get("next_line", int(opts.get('line_count', base.line_count)) > 1))
+    line_count = max(1, min(3, int(opts.get('line_count', 2 if show_following else 1))))
+    if not show_following:
+        line_count = 1
     return AssOptions(
         font=opts.get("font") or base.font,
         font_size=int(opts.get("font_size") or base.font_size),
@@ -1136,7 +1144,10 @@ def _ass_opt_from(opts: dict) -> AssOptions:
         unsung_color=col(opts.get("unsung_color"), base.unsung_color),
         outline=float(opts.get("outline", base.outline)),
         margin_v=int(opts.get("margin_v") or base.margin_v),
-        next_line=bool(opts.get("next_line", base.next_line)),
+        next_line=show_following,
+        line_count=line_count,
+        position_x=max(0, min(100, int(opts.get('position_x', base.position_x)))),
+        position_y=max(0, min(100, int(opts.get('position_y', base.position_y)))),
         lead_ms=int(opts.get("lead_ms") or base.lead_ms),
         tail_ms=int(opts.get("tail_ms") or base.tail_ms),
         min_gap_ms=int(opts.get("min_gap_ms") or base.min_gap_ms),

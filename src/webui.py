@@ -75,6 +75,9 @@ DEFAULT_OPTIONS = {
     "outline": 3.0,
     "margin_v": 118,
     "next_line": True,
+    "line_count": 2,
+    "position_x": 50,
+    "position_y": 89,
     "lead_ms": 320,
     "tail_ms": 320,
     "min_gap_ms": 12,
@@ -853,6 +856,10 @@ def _ass_kwargs(o: dict) -> dict:
             return dflt
 
     d = DEFAULT_OPTIONS
+    show_following = bool(o.get('next_line', int(o.get('line_count', d['line_count'])) > 1))
+    line_count = max(1, min(3, int(o.get('line_count', d['line_count'] if show_following else 1))))
+    if not show_following:
+        line_count = 1
     return {
         "font": o.get("font") or d["font"],
         "font_size": int(o.get("font_size") or d["font_size"]),
@@ -860,7 +867,10 @@ def _ass_kwargs(o: dict) -> dict:
         "unsung_color": col(o.get("unsung_color"), (255, 255, 255)),
         "outline": float(o.get("outline") or d["outline"]),
         "margin_v": int(o.get("margin_v") or d["margin_v"]),
-        "next_line": bool(o.get("next_line", d["next_line"])),
+        "next_line": show_following,
+        "line_count": line_count,
+        "position_x": max(0, min(100, int(o.get('position_x', d['position_x'])))),
+        "position_y": max(0, min(100, int(o.get('position_y', d['position_y'])))),
         "lead_ms": int(o.get("lead_ms") or d["lead_ms"]),
         "tail_ms": int(o.get("tail_ms") or d["tail_ms"]),
         "min_gap_ms": int(o.get("min_gap_ms") or d["min_gap_ms"]),
