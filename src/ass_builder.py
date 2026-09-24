@@ -90,7 +90,10 @@ class AssOptions:
     bold: bool = True
     margin_v: int = 118              # 当前行距底部
     margin_h: int = 60
-    next_line: bool = True           # 显示下一句预览
+    next_line: bool = True           # 兼容旧配置；false 时关闭后续句
+    line_count: int = 2              # 当前行及后续歌词行数（1–3）
+    position_x: int = 50             # 字幕锚点，画面宽度百分比
+    position_y: int = 89             # 字幕锚点，画面高度百分比
     next_scale: float = 0.62
     next_margin_v: int = 46
     next_color: tuple[int, int, int] = (176, 184, 196)
@@ -321,6 +324,10 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
     dim = ass_color(opt.next_color)
     ol = ass_color(opt.outline_color)
     bold = -1 if opt.bold else 0
+    line_count = max(1, min(3, int(opt.line_count))) if opt.next_line else 1
+    x = round(width * max(0, min(100, int(opt.position_x))) / 100)
+    y = round(height * max(0, min(100, int(opt.position_y))) / 100)
+    line_step = max(fs * 1.1, next_fs * 1.4)
 
     head = [
         "[Script Info]",
@@ -357,14 +364,17 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
         body = _karaoke_body(ln, opt, ln.ev_start, width, fs)
         events.append(
             f"Dialogue: 0,{_fmt_time(ln.ev_start)},{_fmt_time(ln.ev_end)},"
-            f"LYRIC,,0,0,0,,{body}"
+            f"LYRIC,,0,0,0,,{{\\an2\\pos({x},{y})}}{body}"
         )
-        if opt.next_line and i + 1 < n:
-            nxt = lines[i + 1]
+        for ahead in range(1, line_count):
+            if i + ahead >= n:
+                break
+            nxt = lines[i + ahead]
             txt = esc_text(nxt.raw or nxt.text)
+            next_y = min(height, round(y + line_step * ahead))
             events.append(
-                f"Dialogue: -1,{_fmt_time(ln.ev_start)},{_fmt_time(ln.ev_end)},"
-                f"NEXT,,0,0,0,,{txt}"
+                f"Dialogue: -{ahead},{_fmt_time(ln.ev_start)},{_fmt_time(ln.ev_end)},"
+                f"NEXT,,0,0,0,,{{\\an2\\pos({x},{next_y})}}{txt}"
             )
     return "\n".join(head + events) + "\n"
 

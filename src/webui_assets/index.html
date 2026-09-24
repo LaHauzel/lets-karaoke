@@ -93,6 +93,14 @@ pre.log{
 }
 pre.log .e{color:var(--err)}
 video{width:100%;border-radius:8px;background:#000;display:block;aspect-ratio:16/9}
+.style-preview{position:relative;width:100%;height:auto;aspect-ratio:16/9;max-height:420px;margin-inline:auto;overflow:hidden;border:1px solid var(--line);border-radius:9px;background:linear-gradient(145deg,#263847,#101820 55%,#253440);isolation:isolate}
+.style-preview video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:0}
+.style-preview-placeholder{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:#c7d4df;background:linear-gradient(145deg,#263847,#101820 55%,#253440);font-size:13px}
+.style-preview-caption{position:absolute;left:var(--caption-x,50%);top:var(--caption-y,89%);transform:translate(-50%,-100%);max-width:92%;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:700;line-height:1.15;pointer-events:none}
+.style-preview-caption.current{background:linear-gradient(90deg,var(--caption-sung,#ffd24a) 0 52%,var(--caption-unsung,#fff) 52%);color:transparent;background-clip:text;-webkit-background-clip:text;-webkit-text-stroke:var(--caption-outline,1px) #101010;text-shadow:0 2px 4px #000b}
+.style-preview-caption.future{color:#b0b8c4;text-shadow:0 2px 4px #000b;-webkit-text-stroke:var(--caption-outline,1px) #101010}
+.frame-tools{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:10px;align-items:center;margin-top:7px}
+.frame-tools input{margin:0}.frame-tools output{text-align:right;color:var(--muted);font:12px ui-monospace,Consolas,monospace}
 .dl{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
 .dl a{
   font-size:12.5px;text-decoration:none;padding:7px 13px;border-radius:7px;
@@ -377,6 +385,35 @@ details[open] summary:before{content:"▾ "}
       </div>
       <div class="row" style="margin-top:8px">
         <div>
+          <label class="fl">字幕位置 · 水平 X <b id="positionXVal" style="color:var(--fg)">50%</b></label>
+          <input type="range" id="positionX" min="5" max="95" value="50">
+        </div>
+        <div>
+          <label class="fl">字幕位置 · 垂直 Y（顶部 → 底部）<b id="positionYVal" style="color:var(--fg)">89%</b></label>
+          <input type="range" id="positionY" min="4" max="92" value="89">
+        </div>
+      </div>
+      <label class="fl">同时显示的歌词行数</label>
+      <select id="lineCount">
+        <option value="1">1 行 · 当前句</option>
+        <option value="2" selected>2 行 · 当前句 + 下一句</option>
+        <option value="3">3 行 · 当前句 + 后两句</option>
+      </select>
+      <div style="margin-top:16px">
+      <label class="fl">画面预览 · 选择视频后默认第一帧，可拖动下方时间轴</label>
+        <div id="stylePreview" class="style-preview" aria-label="字幕样式叠加预览">
+          <video id="stylePreviewVideo" muted playsinline preload="metadata" aria-label="所选视频画面预览"></video>
+          <div id="stylePreviewPlaceholder" class="style-preview-placeholder">选择视频后在这里预览字幕样式<br><span class="hint">预览读取本机文件，不会提前上传</span></div>
+          <div id="stylePreviewCaptions" aria-live="polite"></div>
+        </div>
+        <div class="frame-tools">
+          <input id="previewFrame" type="range" min="0" max="0.1" step="0.04" value="0" disabled aria-label="预览视频帧时间">
+          <output id="previewFrameLabel">首帧</output>
+        </div>
+        <p class="hint">预览使用当前歌词的前几行；黄色展示约一半高亮进度。位置、字体和字号按画面比例预览。历史任务若要换帧预览，请重新选择原视频；MKV 等格式能否读取取决于浏览器。</p>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <div>
           <label class="fl">预亮提前 <b id="leadVal" style="color:var(--fg)">320</b> ms</label>
           <input type="range" id="leadMs" min="0" max="900" step="20" value="320">
         </div>
@@ -385,10 +422,6 @@ details[open] summary:before{content:"▾ "}
           <input type="range" id="tailMs" min="0" max="900" step="20" value="320">
         </div>
       </div>
-      <label style="display:flex;align-items:center;gap:8px;margin-top:12px;font-size:13px">
-        <input type="checkbox" id="nextLine" checked style="width:auto">
-        显示下一句预览
-      </label>
       <label style="display:flex;align-items:center;gap:8px;margin-top:9px;font-size:13px">
         <input type="checkbox" id="groupUnit" style="width:auto">
         日文整单元高亮<span class="badge" style="margin-left:6px">日文推荐</span>
@@ -509,6 +542,7 @@ async function boot(){
     if (n === meta.defaults.font) o.selected = true;
     fs.appendChild(o);
   });
+  renderStylePreview();
   try {
     const r = await fetch('/api/jobs');
     const js = await r.json();
@@ -576,7 +610,8 @@ function dropWire(dropId, inputId, fnId, onSet){
     if(onSet) onSet(f);
   }
 }
-dropWire('#dropMedia', '#media', '#fnMedia');
+let STYLE_PREVIEW_URL = null;
+dropWire('#dropMedia', '#media', '#fnMedia', setStylePreviewFile);
 dropWire('#dropTrack', '#track', '#fnTrack');
 
 $('#lyricsFile').addEventListener('change', async e => {
@@ -586,7 +621,9 @@ $('#lyricsFile').addEventListener('change', async e => {
 });
 $('#btnClearLyrics').addEventListener('click', () => {
   $('#lyrics').value = ''; $('#lyricsFile').value = ''; $('#fnLyrics').textContent = '';
+  renderStylePreview();
 });
+$('#lyrics').addEventListener('input', renderStylePreview);
 
 // ---------------------------------------------------------------- 滑块回显
 const bindVal = (id, out, fmt = v => v) =>
@@ -595,6 +632,81 @@ bindVal('#quality', '#qVal');
 bindVal('#fontSize', '#fsVal');
 bindVal('#leadMs', '#leadVal');
 bindVal('#tailMs', '#tailVal');
+bindVal('#positionX', '#positionXVal', v => v + '%');
+bindVal('#positionY', '#positionYVal', v => v + '%');
+$('#previewFrame').addEventListener('input', e => {
+  const video=$('#stylePreviewVideo');
+  if(video.src && Number.isFinite(video.duration)){
+    video.currentTime=Math.min(video.duration,Number(e.target.value));
+    updatePreviewFrameLabel(video.currentTime);
+  }
+});
+$('#stylePreviewVideo').addEventListener('loadedmetadata', () => {
+  const video=$('#stylePreviewVideo'),slider=$('#previewFrame');
+  slider.max=String(Math.max(0.1,video.duration||0.1));slider.step='0.001';slider.value='0';
+  video.currentTime=0;fitPreviewToVideo();updatePreviewFrameLabel(0);
+});
+$('#stylePreviewVideo').addEventListener('seeked', () => updatePreviewFrameLabel($('#stylePreviewVideo').currentTime));
+$('#stylePreviewVideo').addEventListener('error', () => {
+  $('#stylePreviewPlaceholder').classList.remove('hidden');
+  $('#stylePreviewPlaceholder').firstChild.textContent='浏览器无法预览此视频编码';
+  $('#previewFrame').disabled=true;
+});
+$('#fontSize').addEventListener('input', updatePreviewPositionLimit);
+$('#lineCount').addEventListener('change', updatePreviewPositionLimit);
+['font','fontSize','sung','unsung','positionX','positionY','lineCount','outline','lyrics'].forEach(id => {
+  const el=$('#'+id);if(el){el.addEventListener('input',renderStylePreview);el.addEventListener('change',renderStylePreview);}
+});
+$('#lyricsFile').addEventListener('change', renderStylePreview);
+window.addEventListener('beforeunload',()=>{if(STYLE_PREVIEW_URL)URL.revokeObjectURL(STYLE_PREVIEW_URL)});
+function setStylePreviewFile(file){
+  if(STYLE_PREVIEW_URL){URL.revokeObjectURL(STYLE_PREVIEW_URL);STYLE_PREVIEW_URL=null;}
+  const video=$('#stylePreviewVideo'),slider=$('#previewFrame'),placeholder=$('#stylePreviewPlaceholder'),preview=$('#stylePreview');
+  preview.style.width='100%';preview.style.height='auto';
+  const isVideo=file.type.startsWith('video/')||/\.(mp4|m4v|mov|mkv|webm|avi)$/i.test(file.name);
+  video.pause();video.removeAttribute('src');video.load();
+  if(!isVideo){video.classList.add('hidden');placeholder.classList.remove('hidden');placeholder.firstChild.textContent='当前选择的是音频文件';slider.disabled=true;slider.value='0';updatePreviewFrameLabel(null);return;}
+  STYLE_PREVIEW_URL=URL.createObjectURL(file);video.src=STYLE_PREVIEW_URL;video.currentTime=0;
+  video.classList.remove('hidden');placeholder.classList.add('hidden');slider.disabled=false;slider.value='0';updatePreviewFrameLabel(0);
+}
+function updatePreviewFrameLabel(seconds){
+  const label=$('#previewFrameLabel');if(seconds===null){label.textContent='无画面';return;}
+  if(seconds===0){label.textContent='首帧';return;}
+  const m=Math.floor(seconds/60),s=(seconds%60).toFixed(1).padStart(4,'0');label.textContent=`${m}:${s}`;
+}
+function fitPreviewToVideo(){
+  const video=$('#stylePreviewVideo'),preview=$('#stylePreview'),parent=preview?.parentElement;
+  if(!video?.videoWidth||!parent)return;
+  const ratio=video.videoWidth/video.videoHeight,width=parent.clientWidth,height=Math.min(420,width/ratio);
+  preview.style.width=Math.round(height*ratio)+'px';preview.style.height=Math.round(height)+'px';
+}
+function updatePreviewPositionLimit(){
+  const slider=$('#positionY');if(!slider)return;
+  const count=Number($('#lineCount').value)||2;
+  const size=Number($('#fontSize').value)||66,step=size*1.1/1080*100;
+  const min=Math.ceil(size*1.15/1080*100),max=Math.max(min+1,Math.floor(99-(count-1)*step));
+  slider.min=String(min);slider.max=String(max);
+  if(Number(slider.value)>max)slider.value=String(max);
+  if(Number(slider.value)<min)slider.value=String(min);
+  $('#positionYVal').textContent=slider.value+'%';
+  renderStylePreview();
+}
+function renderStylePreview(){
+  const preview=$('#stylePreview'),captions=$('#stylePreviewCaptions');if(!preview||!captions)return;
+  const count=Number($('#lineCount')?.value)||2,fs=Number($('#fontSize')?.value)||66;
+  const supplied=($('#lyrics')?.value||'').split(/\r?\n/).map(line=>line.replace(/^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+/,'').trim()).filter(Boolean);
+  const lines=supplied.length?supplied.slice(0,count):['当前演唱歌词','下一句预览','后续歌词示例'].slice(0,count);
+  const x=Number($('#positionX')?.value)||50,y=Number($('#positionY')?.value)||89,step=fs*1.1/1080*100;
+  preview.style.setProperty('--caption-x',x+'%');preview.style.setProperty('--caption-y',y+'%');
+  preview.style.setProperty('--caption-sung',$('#sung')?.value||'#ffd24a');preview.style.setProperty('--caption-unsung',$('#unsung')?.value||'#ffffff');
+  preview.style.setProperty('--caption-outline',Math.max(0,Number($('#outline')?.value||3)*preview.clientHeight/1080)+'px');
+  captions.replaceChildren();
+  lines.forEach((line,i)=>{const row=document.createElement('div');row.className='style-preview-caption '+(i?'future':'current');row.textContent=line;
+    row.style.left=x+'%';row.style.top=Math.min(98,y+step*i)+'%';row.style.fontFamily=$('#font')?.value||'sans-serif';row.style.fontSize=Math.max(10,fs*preview.clientHeight/1080)+'px';captions.append(row);});
+}
+new ResizeObserver(()=>{fitPreviewToVideo();renderStylePreview()}).observe($('#stylePreview').parentElement);
+renderStylePreview();
+updatePreviewPositionLimit();
 
 // ---------------------------------------------------------------- 日志
 function logLine(t, isErr){
@@ -682,7 +794,10 @@ function styleOptions(){
     font_size: parseInt($('#fontSize').value),
     sung_color: $('#sung').value,
     unsung_color: $('#unsung').value,
-    next_line: $('#nextLine').checked,
+    line_count: Number($('#lineCount').value),
+    next_line: Number($('#lineCount').value)>1,
+    position_x: Number($('#positionX').value),
+    position_y: Number($('#positionY').value),
     lead_ms: parseInt($('#leadMs').value),
     tail_ms: parseInt($('#tailMs').value),
     group_same_unit: $('#groupUnit').checked,
@@ -940,9 +1055,14 @@ async function loadAlign(version=''){
     if(Array.isArray(opts[key]))$('#'+id).value='#'+opts[key].map(v=>Number(v).toString(16).padStart(2,'0')).join('');
     else if(opts[key])$('#'+id).value=opts[key];
   }
-  for(const [key,id] of Object.entries({font:'font',font_size:'fontSize',outline:'outline',margin_v:'marginV',lead_ms:'leadMs',tail_ms:'tailMs',next_line:'nextLine',group_same_unit:'groupUnit'})){
+  for(const [key,id] of Object.entries({font:'font',font_size:'fontSize',outline:'outline',margin_v:'marginV',lead_ms:'leadMs',tail_ms:'tailMs',group_same_unit:'groupUnit'})){
     const input=$('#'+id);if(input&&opts[key]!=null){if(input.type==='checkbox')input.checked=opts[key];else input.value=opts[key];}
   }
+  $('#lineCount').value=String(Math.max(1,Math.min(3,opts.next_line===false?1:Number(opts.line_count??2))));
+  $('#positionX').value=String(opts.position_x ?? 50);
+  $('#positionY').value=String(opts.position_y ?? Math.round((1-(Number(opts.margin_v??118)/1080))*100));
+  $('#positionXVal').textContent=$('#positionX').value+'%';$('#positionYVal').textContent=$('#positionY').value+'%';
+  updatePreviewPositionLimit();
   TUNE_VERSION=Number(version)||0;TUNE_LOOP=null;$('#loopInfo').textContent='';
   const currentHealth=aj.health||{};
   $('#healthBadge').textContent=`当前${TUNE_VERSION?' v'+TUNE_VERSION:'原始版'} · 结构自检 ${currentHealth.ok?'通过':'需检查'}`;
