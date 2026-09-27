@@ -9,7 +9,7 @@ The menu order is the recommended feature order:
 | Option | Profile | Function | GPU/CUDA | Models |
 | --- | --- | --- | --- | --- |
 | 1 | Whisper subtitles | Known-lyrics Whisper/stable-ts alignment, subtitle rendering, optional Demucs separation | Required | Whisper |
-| 2 | Concert segmentation minimum | Long-video audio analysis, waveform editing, and FFmpeg segment export | Not required | None |
+| 2 | Concert segmentation minimum | Long-video audio analysis, waveform editing with boundary snapping, and FFmpeg segment export | Not required | None |
 | 3 | Qwen full subtitles | Whisper plus Qwen ForcedAligner, ASR lyric drafts, and Wav2Vec2 support | Required | Whisper, ForcedAligner, ASR |
 | 4 | SOFA singing alignment | Whisper line windows followed by SOFA phoneme-level singing alignment | Required | Whisper, SOFA checkpoint |
 | 5 | Full environment | Whisper, Qwen, SOFA, Demucs, and all supported subtitle backends | Required | Whisper, Qwen, SOFA |

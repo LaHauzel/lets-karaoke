@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- 演唱会音量轴新增“吸附边界到当前时间”按钮，可将播放位置前后 10 秒内的最近切割边界精确移动到当前时间，并立即同步时间表。
+
 - 按功能拆分 Windows 部署 profile：Whisper 字幕、演唱会切割最小环境、Qwen 完整字幕、SOFA 歌声对齐和完整环境；安装助手按该顺序显示用途、依赖和模型下载步骤。
 - 新增 `requirements-concert.txt`、`requirements-base.txt`、`requirements-whisper.txt`、`requirements-qwen.txt`、`requirements-sofa.txt` 和 `requirements-full.txt`，并保留 `requirements.txt` 作为完整环境聚合入口。
 - 新增 Whisper checkpoint 下载器和 profile-aware 环境检查；演唱会切割 profile 不安装 CUDA、字幕模型或 GPU 依赖。

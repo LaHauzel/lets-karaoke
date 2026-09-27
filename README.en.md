@@ -15,7 +15,7 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 - Alignment diagnostics, low-confidence markers, anchor editing, version history, and fast re-rendering.
 - Enhanced LRC, SRT, and ASS output, with optional FFmpeg subtitle burn-in.
 - Acoustic boundary suggestions for long concert videos based on volume dips and spectral changes.
-- Interactive waveform and time-table editing: seek, drag boundaries, split at the playhead, merge adjacent segments, and edit timestamps.
+- Interactive waveform and time-table editing: seek, drag boundaries, snap a nearby boundary to the current time, split at the playhead, merge adjacent segments, and edit timestamps.
 - Multiple sensitivity versions per concert record, with batch export to MKV or MP4.
 - One local backend service shared by the two independent WebUI tabs.
 
@@ -122,7 +122,7 @@ When lyrics are unavailable, use automatic transcription to create a draft. Corr
 
 1. Enter the full path to a local video. Supported containers include MP4, MKV, MOV, AVI, WebM, M4V, TS, and MTS. The file must contain readable video, duration, and an audio stream.
 2. Set the minimum candidate length and sensitivity (conservative, balanced, or sensitive), then start analysis. The analyzer extracts low-rate audio summaries one second at a time and does not load GPU models.
-3. Review candidates in the table and player. The waveform supports seeking, dragging blue boundaries, splitting at the playhead, and deleting a boundary to merge adjacent segments. Edits immediately update the time table.
+3. Review candidates in the table and player. The waveform supports seeking, dragging blue boundaries, snapping a nearby boundary to the playhead, splitting at the playhead, and deleting a boundary to merge adjacent segments. Edits immediately update the time table.
 4. Select an existing record to change sensitivity or minimum length. “Re-analyze this record” creates a new version under the same record and preserves earlier versions and completed exports.
 5. Save the time table, select segments, and choose an export mode:
    - **Fast export:** stream copy to MKV; fast, but keyframes affect the exact cut.

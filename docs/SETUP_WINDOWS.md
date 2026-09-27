@@ -13,7 +13,7 @@
 | 选项 | 环境 | 提供的功能 | GPU/CUDA | 模型 |
 | --- | --- | --- | --- | --- |
 | 1 | Whisper 字幕环境 | 已有歌词的 Whisper/stable-ts 对齐、字幕渲染、可选 Demucs 人声分离 | 需要 | Whisper |
-| 2 | 演唱会切割最小环境 | 长视频音频分析、音量轴交互编辑、FFmpeg 分段导出 | 不需要 | 不需要 |
+| 2 | 演唱会切割最小环境 | 长视频音频分析、音量轴交互编辑（含边界吸附）、FFmpeg 分段导出 | 不需要 | 不需要 |
 | 3 | Qwen 完整字幕环境 | Whisper 功能，加 Qwen ForcedAligner、ASR 歌词草稿和 Wav2Vec2 支持 | 需要 | Whisper、ForcedAligner、ASR |
 | 4 | SOFA 歌声对齐环境 | Whisper 行窗口，加 SOFA 音素级歌声对齐 | 需要 | Whisper、SOFA checkpoint |
 | 5 | 完整环境 | Whisper、Qwen、SOFA、Demucs 和全部字幕后端 | 需要 | Whisper、Qwen、SOFA |
