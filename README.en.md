@@ -11,7 +11,7 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 ## Features
 
 - Word- and character-level alignment for supplied lyrics with Whisper/stable-ts.
-- Batch processing for multiple video/audio files or an entire folder using the same lyric and subtitle settings; each input is saved as its own history record.
+- Batch processing for multiple video/audio files or an entire folder; select each queue item to assign its own lyrics and subtitle style, with a separate history record for every input.
 - ASR draft generation when no lyric file is available, followed by manual correction and re-alignment.
 - Alignment diagnostics, low-confidence markers, anchor editing, version history, and fast re-rendering.
 - Enhanced LRC, SRT, and ASS output, with optional FFmpeg subtitle burn-in.

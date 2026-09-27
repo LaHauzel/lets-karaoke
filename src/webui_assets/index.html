@@ -193,7 +193,14 @@ details[open] summary:before{content:"▾ "}
       </div>
       <input type="file" id="media" accept="video/*,audio/*" multiple class="hidden">
       <input type="file" id="mediaFolder" accept="video/*,audio/*" webkitdirectory directory multiple class="hidden">
-      <p class="hint">批量任务会按选择顺序逐个处理；下方歌词和字幕设置会应用到全部文件。</p>
+      <p class="hint">批量任务会按选择顺序逐个处理；选择多个文件后，可在“逐文件配置”中分别设置歌词和字幕样式。</p>
+      <div id="mediaQueueBox" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
+          <b>逐文件配置</b><span class="hint" id="mediaActiveName" style="margin:0"></span>
+        </div>
+        <div id="mediaQueueList" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
+        <p class="hint" style="margin-bottom:0">点击文件后，在上方歌词区和下方字幕样式区编辑；修改只应用于当前文件。每个文件会生成独立历史记录。</p>
+      </div>
 
       <label class="fl">歌词来源（三选一 · 不确定就选第一个）</label>
       <div class="seg" id="segSrc" style="margin-bottom:7px">
@@ -368,7 +375,10 @@ details[open] summary:before{content:"▾ "}
     </div>
 
     <div class="card">
-      <h2><span class="n">2</span>字幕样式</h2>
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <h2><span class="n">2</span>字幕样式</h2>
+        <button class="mini" type="button" id="btnResetStyle">重置当前样式</button>
+      </div>
       <div class="row">
         <div>
           <label class="fl">字体</label>
@@ -531,7 +541,8 @@ details[open] summary:before{content:"▾ "}
 
 <script>
 const $ = (s) => document.querySelector(s);
-let JOB = null, ALIGN = null, ES = null, MEDIA_QUEUE = [], BATCH_CANCEL_REQUESTED = false;
+let JOB = null, ALIGN = null, ES = null, MEDIA_QUEUE = [], MEDIA_ITEMS = [], MEDIA_ACTIVE_INDEX = -1;
+let MEDIA_SWITCHING = false, BATCH_CANCEL_REQUESTED = false;
 let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null;
 let HISTORY = [], EDITABLE = true, EDITING = false;
 const escapeText = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -595,6 +606,69 @@ $('#lyricsFile').addEventListener('change', refreshSrcUI);
 $('#btnClearLyrics').addEventListener('click', () => setTimeout(refreshSrcUI, 0));
 refreshSrcUI();
 
+const STYLE_DEFAULTS = {
+  font: '', font_size: 66, sung_color: '#FFD24A', unsung_color: '#FFFFFF',
+  line_count: 2, next_line: true, position_x: 50, position_y: 89,
+  lead_ms: 320, tail_ms: 320, group_same_unit: false,
+};
+function defaultStyleOptions(){
+  return {...STYLE_DEFAULTS, font: window.RULE_META?.defaults?.font || $('#font')?.value || ''};
+}
+function applyStyleOptions(options){
+  const opts = {...defaultStyleOptions(), ...(options || {})};
+  const set = (id, value) => { const el = $('#'+id); if(el && value != null) el.value = String(value); };
+  const font = $('#font');
+  if(font && opts.font && [...font.options].some(o => o.value === opts.font)) font.value = opts.font;
+  set('fontSize', opts.font_size);
+  set('sung', opts.sung_color); set('unsung', opts.unsung_color);
+  set('lineCount', opts.line_count ?? (opts.next_line ? 2 : 1));
+  set('positionX', opts.position_x); set('positionY', opts.position_y);
+  set('leadMs', opts.lead_ms); set('tailMs', opts.tail_ms);
+  if($('#groupUnit')) $('#groupUnit').checked = Boolean(opts.group_same_unit);
+  $('#fsVal').textContent = $('#fontSize').value;
+  $('#leadVal').textContent = $('#leadMs').value;
+  $('#tailVal').textContent = $('#tailMs').value;
+  $('#positionXVal').textContent = $('#positionX').value + '%';
+  updatePreviewPositionLimit();
+  renderStylePreview();
+}
+function captureActiveMediaItem(){
+  if(MEDIA_SWITCHING || MEDIA_ACTIVE_INDEX < 0 || !MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]) return;
+  const item = MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+  item.lyrics = $('#lyrics').value;
+  item.lyricsFileName = item.lyricsFile?.name || item.lyricsFileName || '';
+  item.style = JSON.parse(JSON.stringify(styleOptions()));
+}
+function renderMediaQueue(){
+  const box=$('#mediaQueueBox'),list=$('#mediaQueueList');
+  if(!box||!list)return;
+  box.classList.toggle('hidden', MEDIA_ITEMS.length<=1);
+  list.replaceChildren();
+  MEDIA_ITEMS.forEach((item,i)=>{
+    const b=document.createElement('button');b.type='button';b.className='mini';
+    b.style.cssText='text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis';
+    b.style.borderColor=i===MEDIA_ACTIVE_INDEX?'var(--blue)':'var(--line)';
+    const hasLyrics=Boolean((item.lyrics||'').trim()||item.lyricsFile);
+    b.textContent=`${i+1}. ${item.file.name} · ${hasLyrics?'歌词已设置':'待填写歌词'}`;
+    b.title=item.file.name;b.onclick=()=>activateMediaItem(i);list.append(b);
+  });
+  const active=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+  $('#mediaActiveName').textContent=active?`当前编辑：${active.file.name}`:'';
+}
+function activateMediaItem(index){
+  if(index<0||index>=MEDIA_ITEMS.length)return;
+  captureActiveMediaItem();
+  const item=MEDIA_ITEMS[index];
+  MEDIA_SWITCHING=true;MEDIA_ACTIVE_INDEX=index;
+  $('#lyrics').value=item.lyrics||'';
+  $('#lyricsFile').value='';
+  $('#fnLyrics').textContent=item.lyricsFileName?`已载入：${item.lyricsFileName}`:'';
+  applyStyleOptions(item.style||defaultStyleOptions());
+  MEDIA_SWITCHING=false;
+  if(item.file)setStylePreviewFile(item.file);
+  refreshSrcUI();renderStylePreview();renderMediaQueue();
+}
+
 // ---------------------------------------------------------------- 拖拽上传
 function dropWire(dropId, inputId, fnId, onSet){
   const d = $(dropId), inp = $(inputId);
@@ -624,15 +698,26 @@ function mediaFiles(files){
   ));
 }
 function setMediaSelection(first, files=[first]){
-  MEDIA_QUEUE = mediaFiles(files);
-  const count = MEDIA_QUEUE.length;
+  captureActiveMediaItem();
+  const selected = mediaFiles(files);
+  const seedLyrics = $('#lyrics').value;
+  const seedLyricsFile = $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile || null;
+  const seedStyle = JSON.parse(JSON.stringify(styleOptions()));
+  MEDIA_ITEMS = selected.map(file => ({
+    file, lyrics:seedLyrics, lyricsFile:seedLyricsFile,
+    lyricsFileName:seedLyricsFile?.name || '', style:JSON.parse(JSON.stringify(seedStyle)),
+  }));
+  MEDIA_QUEUE = MEDIA_ITEMS.map(item => item.file);
+  MEDIA_ACTIVE_INDEX = -1;
+  const count = MEDIA_ITEMS.length;
   const names = MEDIA_QUEUE.slice(0,3).map(f => f.name).join('、');
   $('#fnMedia').textContent = count === 0 ? '未找到可处理的媒体文件' :
     (count === 1 ? `${names}  (${(MEDIA_QUEUE[0].size/1048576).toFixed(1)} MB)` :
       `${count} 个文件：${names}${count>3?' 等':''}`);
   $('#dropMedia').classList.toggle('has', count > 0);
   $('#btnRun').textContent = count > 1 ? `批量生成卡拉OK（${count} 个）` : '开始生成卡拉OK';
-  if(MEDIA_QUEUE[0]) setStylePreviewFile(MEDIA_QUEUE[0]);
+  renderMediaQueue();
+  if(MEDIA_ITEMS[0]) activateMediaItem(0);
   refreshSrcUI();
 }
 dropWire('#dropMedia', '#media', '#fnMedia', (first, files) => setMediaSelection(first, files));
@@ -648,12 +733,23 @@ $('#lyricsFile').addEventListener('change', async e => {
   const f = e.target.files[0]; if(!f) return;
   $('#lyrics').value = await f.text();
   $('#fnLyrics').textContent = '已载入：' + f.name;
+  refreshSrcUI();
+  if(MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
+    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFile = f;
+    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFileName = f.name;
+    captureActiveMediaItem(); renderMediaQueue();
+  }
 });
 $('#btnClearLyrics').addEventListener('click', () => {
   $('#lyrics').value = ''; $('#lyricsFile').value = ''; $('#fnLyrics').textContent = '';
+  if(MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
+    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFile = null;
+    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFileName = '';
+    captureActiveMediaItem(); renderMediaQueue();
+  }
   renderStylePreview();
 });
-$('#lyrics').addEventListener('input', renderStylePreview);
+$('#lyrics').addEventListener('input', () => { captureActiveMediaItem(); refreshSrcUI(); renderStylePreview(); renderMediaQueue(); });
 
 // ---------------------------------------------------------------- 滑块回显
 const bindVal = (id, out, fmt = v => v) =>
@@ -684,10 +780,18 @@ $('#stylePreviewVideo').addEventListener('error', () => {
 });
 $('#fontSize').addEventListener('input', updatePreviewPositionLimit);
 $('#lineCount').addEventListener('change', updatePreviewPositionLimit);
-['font','fontSize','sung','unsung','positionX','positionY','lineCount','outline','lyrics'].forEach(id => {
-  const el=$('#'+id);if(el){el.addEventListener('input',renderStylePreview);el.addEventListener('change',renderStylePreview);}
+['font','fontSize','sung','unsung','positionX','positionY','lineCount','leadMs','tailMs','groupUnit'].forEach(id => {
+  const el=$('#'+id);if(el){
+    el.addEventListener('input',()=>{captureActiveMediaItem();renderStylePreview();renderMediaQueue();});
+    el.addEventListener('change',()=>{captureActiveMediaItem();renderStylePreview();renderMediaQueue();});
+  }
 });
 $('#lyricsFile').addEventListener('change', renderStylePreview);
+$('#btnResetStyle').addEventListener('click', () => {
+  applyStyleOptions(defaultStyleOptions());
+  captureActiveMediaItem();
+  renderMediaQueue();
+});
 window.addEventListener('beforeunload',()=>{if(STYLE_PREVIEW_URL)URL.revokeObjectURL(STYLE_PREVIEW_URL)});
 function setStylePreviewFile(file){
   if(STYLE_PREVIEW_URL){URL.revokeObjectURL(STYLE_PREVIEW_URL);STYLE_PREVIEW_URL=null;}
@@ -793,25 +897,29 @@ async function startMediaJob(media, config){
   return j.job;
 }
 $('#btnRun').addEventListener('click', async () => {
-  const queue = mediaFiles(MEDIA_QUEUE);
-  const lyrics = $('#lyrics').value.trim();
-  const lf = $('#lyricsFile').files[0];
+  captureActiveMediaItem();
+  const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
+  const queue = items.map(item => item.file);
   const useAsr = (SRC === 'asr');
   if(!queue.length){ alert('请先选择视频或音频文件'); return; }
-  if(!lyrics && !lf && !useAsr){
-    alert('请粘贴歌词、选择歌词文件，或把「歌词来源」切到「③ 没歌词 · 自动转写」'); return;
+  if(!useAsr){
+    const missing = items.filter(item => !(item.lyrics||'').trim() && !item.lyricsFile);
+    if(missing.length){
+      alert(`请为以下文件填写歌词或选择歌词文件：\n${missing.map(item => item.file.name).join('\n')}`);
+      return;
+    }
   }
   let config;
   try {
     config = {
-      lyrics, lyricsFile:lf, useAsr, source:SRC, vocal:VOCAL, lang:LANG,
+      useAsr, source:SRC, vocal:VOCAL, lang:LANG,
       alignmentProfile:$('#alignmentProfile').value, rules:JSON.stringify(collectRules()),
       whisperModel:$('#whisperModel').value, vocalGuide:$('#useVocalGuide').checked,
       alignOnVocals:$('#useAlignVocals').checked, autoRetry:$('#autoRetry').checked,
       alignDual:$('#useDual').checked, track:$('#track').files[0],
       demucs:$('#demucs').value, backend:$('#backend').value, timedMode:$('#timedMode').value,
       encoder:$('#encoder').value, quality:$('#quality').value,
-      separate:$('#separate').checked, options:JSON.stringify(styleOptions()),
+      separate:$('#separate').checked,
     };
   } catch(e) { showErr(e.message); return; }
 
@@ -826,12 +934,17 @@ $('#btnRun').addEventListener('click', async () => {
   for(let i=0;i<queue.length;i++){
     if(BATCH_CANCEL_REQUESTED){cancelled=true;break;}
     const media = queue[i];
+    const item = items[i];
     JOB = null;
     if(i > 0) $('#resultCard').classList.add('hidden');
     $('#btnCancel').disabled = true;
     setProgress(i/queue.length, `准备第 ${i+1}/${queue.length} 个：${media.name}`);
     try {
-      const job = await startMediaJob(media, config);
+      const itemConfig = {...config,
+        lyrics:(item.lyrics||'').trim(), lyricsFile:item.lyricsFile||null,
+        options:JSON.stringify(item.style||styleOptions()),
+      };
+      const job = await startMediaJob(media, itemConfig);
       JOB = job;
       $('#btnCancel').disabled = false;
       logLine(`第 ${i+1}/${queue.length} 个任务 ${job} 已创建：${media.name}`);
