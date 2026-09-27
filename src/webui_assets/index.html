@@ -184,10 +184,16 @@ details[open] summary:before{content:"▾ "}
       <label class="fl">视频 / 音频（必填）</label>
       <div class="drop" id="dropMedia">
         <b>拖入文件，或点击选择</b>
-        <span>mp4 · mkv · mov · mp3 · wav · flac</span>
+        <span>支持多选文件，也可以选择整个文件夹</span>
+        <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px">
+          <button type="button" class="mini" id="pickMediaFiles">选择多个文件</button>
+          <button type="button" class="mini" id="pickMediaFolder">选择文件夹</button>
+        </div>
         <div class="fn" id="fnMedia"></div>
       </div>
-      <input type="file" id="media" accept="video/*,audio/*" class="hidden">
+      <input type="file" id="media" accept="video/*,audio/*" multiple class="hidden">
+      <input type="file" id="mediaFolder" accept="video/*,audio/*" webkitdirectory directory multiple class="hidden">
+      <p class="hint">批量任务会按选择顺序逐个处理；下方歌词和字幕设置会应用到全部文件。</p>
 
       <label class="fl">歌词来源（三选一 · 不确定就选第一个）</label>
       <div class="seg" id="segSrc" style="margin-bottom:7px">
@@ -443,7 +449,7 @@ details[open] summary:before{content:"▾ "}
       </div>
       <pre class="log" id="log">就绪。上传视频与歌词后点「开始生成」。</pre>
       <div style="margin-top:10px;display:flex;gap:8px">
-        <button class="ghost" id="btnCancel" style="flex:1" disabled>取消任务</button>
+        <button class="ghost" id="btnCancel" style="flex:1" disabled>取消当前任务 / 停止批量</button>
       </div>
       <div class="err hidden" id="errBox"></div>
     </div>
@@ -525,7 +531,7 @@ details[open] summary:before{content:"▾ "}
 
 <script>
 const $ = (s) => document.querySelector(s);
-let JOB = null, ALIGN = null, ES = null;
+let JOB = null, ALIGN = null, ES = null, MEDIA_QUEUE = [], BATCH_CANCEL_REQUESTED = false;
 let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null;
 let HISTORY = [], EDITABLE = true, EDITING = false;
 const escapeText = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -594,24 +600,48 @@ function dropWire(dropId, inputId, fnId, onSet){
   const d = $(dropId), inp = $(inputId);
   const accept = () => { inp.click(); };
   d.addEventListener('click', accept);
-  inp.addEventListener('change', () => { if(inp.files[0]) set(inp.files[0]); });
+  inp.addEventListener('change', () => { if(inp.files[0]) set(inp.files[0], [...inp.files]); });
   ['dragenter','dragover'].forEach(ev =>
     d.addEventListener(ev, e => { e.preventDefault(); d.classList.add('hot'); }));
   ['dragleave','drop'].forEach(ev =>
     d.addEventListener(ev, e => { e.preventDefault(); d.classList.remove('hot'); }));
   d.addEventListener('drop', e => {
-    const f = e.dataTransfer.files[0]; if(!f) return;
+    const files = [...e.dataTransfer.files], f = files[0]; if(!f) return;
     inp.files = e.dataTransfer.files;   // 保持与表单一致
-    set(f);
+    set(f, files);
   });
-  function set(f){
+  function set(f, files=[f]){
     $(fnId).textContent = f.name + '  (' + (f.size/1048576).toFixed(1) + ' MB)';
     d.classList.add('has');
-    if(onSet) onSet(f);
+    if(onSet) onSet(f, files);
   }
 }
 let STYLE_PREVIEW_URL = null;
-dropWire('#dropMedia', '#media', '#fnMedia', setStylePreviewFile);
+function mediaFiles(files){
+  return [...(files || [])].filter(f => f && (
+    (f.type || '').startsWith('video/') || (f.type || '').startsWith('audio/') ||
+    /\.(mp4|m4v|mov|mkv|webm|avi|ts|mts|mp3|wav|flac|m4a|aac|ogg)$/i.test(f.name)
+  ));
+}
+function setMediaSelection(first, files=[first]){
+  MEDIA_QUEUE = mediaFiles(files);
+  const count = MEDIA_QUEUE.length;
+  const names = MEDIA_QUEUE.slice(0,3).map(f => f.name).join('、');
+  $('#fnMedia').textContent = count === 0 ? '未找到可处理的媒体文件' :
+    (count === 1 ? `${names}  (${(MEDIA_QUEUE[0].size/1048576).toFixed(1)} MB)` :
+      `${count} 个文件：${names}${count>3?' 等':''}`);
+  $('#dropMedia').classList.toggle('has', count > 0);
+  $('#btnRun').textContent = count > 1 ? `批量生成卡拉OK（${count} 个）` : '开始生成卡拉OK';
+  if(MEDIA_QUEUE[0]) setStylePreviewFile(MEDIA_QUEUE[0]);
+  refreshSrcUI();
+}
+dropWire('#dropMedia', '#media', '#fnMedia', (first, files) => setMediaSelection(first, files));
+$('#pickMediaFiles').addEventListener('click', e => { e.stopPropagation(); $('#media').click(); });
+$('#pickMediaFolder').addEventListener('click', e => { e.stopPropagation(); $('#mediaFolder').click(); });
+$('#mediaFolder').addEventListener('change', e => {
+  const files = [...e.target.files];
+  if(files.length) setMediaSelection(files[0], files);
+});
 dropWire('#dropTrack', '#track', '#fnTrack');
 
 $('#lyricsFile').addEventListener('change', async e => {
@@ -726,66 +756,112 @@ function setProgress(p, stage){
 }
 
 // ---------------------------------------------------------------- 开始生成
+function buildRunForm(media, config){
+  const fd = new FormData();
+  fd.append('media', media, media.name);
+  fd.append('alignment_profile', config.alignmentProfile);
+  if(config.lyricsFile && !config.useAsr) fd.append('lyrics_file', config.lyricsFile, config.lyricsFile.name);
+  if(config.lyrics && !config.useAsr) fd.append('lyrics_text', config.lyrics);
+  fd.append('rules', config.rules);
+  fd.append('whisper_model', config.whisperModel);
+  fd.append('vocal_guide', config.vocalGuide ? '1' : '0');
+  fd.append('align_on_vocals', config.alignOnVocals ? '1' : '0');
+  fd.append('auto_retry', config.autoRetry ? '1' : '0');
+  fd.append('align_dual', config.alignDual ? '1' : '0');
+  if(config.useAsr) fd.append('asr', '1');
+  if(config.source === 'sofa') fd.append('sofa', '1');
+  else if(config.source === 'whisper') fd.append('whisper', '1');
+  if(config.track) fd.append('audio_track', config.track, config.track.name);
+  fd.append('vocal_mode', config.vocal);
+  fd.append('lang', config.lang);
+  fd.append('demucs', config.demucs);
+  fd.append('backend', config.backend);
+  fd.append('timed_mode', config.timedMode);
+  fd.append('encoder', config.encoder);
+  fd.append('quality', config.quality);
+  fd.append('separate', config.separate ? '1' : '0');
+  fd.append('options', config.options);
+  return fd;
+}
+async function startMediaJob(media, config){
+  const r = await fetch('/api/run', { method:'POST', body: buildRunForm(media, config) });
+  const text = await r.text();
+  let j;
+  try { j = JSON.parse(text); }
+  catch(_) { throw new Error(`启动接口返回了非 JSON（${r.status}）`); }
+  if(!r.ok || j.error || !j.job) throw new Error(j.error || `任务创建失败（${r.status}）`);
+  return j.job;
+}
 $('#btnRun').addEventListener('click', async () => {
-  const media = $('#media').files[0];
+  const queue = mediaFiles(MEDIA_QUEUE);
   const lyrics = $('#lyrics').value.trim();
   const lf = $('#lyricsFile').files[0];
   const useAsr = (SRC === 'asr');
-  if(!media){ alert('请先选择视频或音频文件'); return; }
+  if(!queue.length){ alert('请先选择视频或音频文件'); return; }
   if(!lyrics && !lf && !useAsr){
     alert('请粘贴歌词、选择歌词文件，或把「歌词来源」切到「③ 没歌词 · 自动转写」'); return;
   }
-
-  const fd = new FormData();
-  fd.append('media', media);
-  fd.append('alignment_profile', $('#alignmentProfile').value);
-  if(lf && !useAsr) fd.append('lyrics_file', lf);
-  if(lyrics && !useAsr) fd.append('lyrics_text', lyrics);
-  try { fd.append('rules', JSON.stringify(collectRules())); }
-  catch(e) { showErr(e.message); return; }
-  fd.append('whisper_model', $('#whisperModel').value);
-  fd.append('vocal_guide', $('#useVocalGuide').checked ? '1' : '0');
-  fd.append('align_on_vocals', $('#useAlignVocals').checked ? '1' : '0');
-  fd.append('auto_retry', $('#autoRetry').checked ? '1' : '0');
-  fd.append('align_dual', $('#useDual').checked ? '1' : '0');
-  if(useAsr) fd.append('asr', '1');
-  if(SRC === 'sofa'){
-    fd.append('sofa', '1');
-  } else if(SRC === 'whisper'){
-    fd.append('whisper', '1');
-  }
-  const tk = $('#track').files[0]; if(tk) fd.append('audio_track', tk);
-  fd.append('vocal_mode', VOCAL);
-  fd.append('lang', LANG);
-  fd.append('demucs', $('#demucs').value);
-  fd.append('backend', $('#backend').value);
-  fd.append('timed_mode', $('#timedMode').value);
-  fd.append('encoder', $('#encoder').value);
-  fd.append('quality', $('#quality').value);
-  fd.append('separate', $('#separate').checked ? '1' : '0');
-  fd.append('options', JSON.stringify(styleOptions()));
+  let config;
+  try {
+    config = {
+      lyrics, lyricsFile:lf, useAsr, source:SRC, vocal:VOCAL, lang:LANG,
+      alignmentProfile:$('#alignmentProfile').value, rules:JSON.stringify(collectRules()),
+      whisperModel:$('#whisperModel').value, vocalGuide:$('#useVocalGuide').checked,
+      alignOnVocals:$('#useAlignVocals').checked, autoRetry:$('#autoRetry').checked,
+      alignDual:$('#useDual').checked, track:$('#track').files[0],
+      demucs:$('#demucs').value, backend:$('#backend').value, timedMode:$('#timedMode').value,
+      encoder:$('#encoder').value, quality:$('#quality').value,
+      separate:$('#separate').checked, options:JSON.stringify(styleOptions()),
+    };
+  } catch(e) { showErr(e.message); return; }
 
   $('#errBox').classList.add('hidden');
   $('#resultCard').classList.add('hidden');
   $('#tuneCard').classList.add('hidden');
   $('#log').textContent = '';
-  setProgress(0, '上传中…');
   $('#btnRun').disabled = true;
   $('#btnCancel').disabled = false;
-
-  let job;
-  try {
-    const r = await fetch('/api/run', { method:'POST', body: fd });
-    const j = await r.json();
-    if(j.error){ throw new Error(j.error); }
-    job = j.job;
-  } catch(e){
-    $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
-    showErr('启动失败：' + e.message); return;
+  BATCH_CANCEL_REQUESTED = false;
+  let completed = 0, failed = 0, cancelled = false;
+  for(let i=0;i<queue.length;i++){
+    if(BATCH_CANCEL_REQUESTED){cancelled=true;break;}
+    const media = queue[i];
+    JOB = null;
+    if(i > 0) $('#resultCard').classList.add('hidden');
+    $('#btnCancel').disabled = true;
+    setProgress(i/queue.length, `准备第 ${i+1}/${queue.length} 个：${media.name}`);
+    try {
+      const job = await startMediaJob(media, config);
+      JOB = job;
+      $('#btnCancel').disabled = false;
+      logLine(`第 ${i+1}/${queue.length} 个任务 ${job} 已创建：${media.name}`);
+      const batchStart = i / queue.length;
+      const batchSpan = 1 / queue.length;
+      const outcome = await watch(job, batchStart, batchSpan);
+      if(outcome.state === 'done'){
+        completed++;
+        await refreshHistory();
+      } else if(outcome.state === 'cancelled'){
+        cancelled=true;
+        break;
+      } else {
+        failed++;
+      }
+    } catch(e){
+      failed++;
+      showErr(`${media.name}：${e.message}`);
+    }
   }
-  JOB = job;
-  logLine('任务 ' + job + ' 已创建');
-  watch(job);
+  $('#btnRun').disabled = false;
+  $('#btnCancel').disabled = true;
+  if(cancelled){
+    setProgress(completed/queue.length, `已取消，完成 ${completed}/${queue.length} 个`);
+    logLine(`批量任务已取消：完成 ${completed} 个，失败 ${failed} 个，剩余未处理 ${queue.length-completed-failed} 个。`);
+  } else {
+    setProgress(1, `批量完成：成功 ${completed} 个，失败 ${failed} 个`);
+    logLine(`批量任务完成：成功 ${completed} 个，失败 ${failed} 个。`);
+  }
+  BATCH_CANCEL_REQUESTED = false;
 });
 
 function styleOptions(){
@@ -843,22 +919,35 @@ function collectRules(){
   return r;
 }
 
-function watch(job){
+function watch(job, progressStart=0, progressSpan=1){
   if(ES) ES.close();
-  ES = new EventSource('/api/events?job=' + encodeURIComponent(job));
-  ES.onmessage = ev => {
-    const d = JSON.parse(ev.data);
-    setProgress(d.progress, d.lines.length ? stripStamp(d.lines[d.lines.length-1]) : null);
-    d.lines.forEach(l => {
-      logLine(l, l.includes('失败') || l.includes('!!'));
-    });
-    if(d.asr_lrc) showAsrDraft(d.asr_lrc, null);
-    if(d.state === 'done' && d.result){ finish(d.result); ES.close(); ES = null; }    if(d.state === 'error'){ $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
-      showErr(d.error || '未知错误'); ES.close(); ES = null; }
-    if(d.state === 'cancelled'){ $('#btnRun').disabled = false; $('#btnCancel').disabled = true;
-      setProgress(0, '已取消'); ES.close(); ES = null; }
-  };
-  ES.onerror = () => { /* 服务器关闭流时静默 */ };
+  const source = new EventSource('/api/events?job=' + encodeURIComponent(job));
+  ES = source;
+  return new Promise(resolve => {
+    let settled = false;
+    const close = () => { source.close(); if(ES === source) ES = null; };
+    const settle = outcome => { if(settled)return; settled=true; close(); resolve(outcome); };
+    source.onmessage = ev => {
+      const d = JSON.parse(ev.data);
+      const progress = progressStart + Math.max(0, Math.min(1, Number(d.progress) || 0)) * progressSpan;
+      setProgress(progress, d.lines.length ? stripStamp(d.lines[d.lines.length-1]) : null);
+      d.lines.forEach(l => logLine(l, l.includes('失败') || l.includes('!!')));
+      if(d.asr_lrc) showAsrDraft(d.asr_lrc, null);
+      if(d.state === 'done' && d.result){
+        Promise.resolve(finish(d.result, progressStart, progressSpan)).then(() => settle({state:'done',result:d.result}))
+          .catch(e => { showErr(e.message); settle({state:'error',error:e.message}); });
+      }
+      if(d.state === 'error'){
+        showErr(d.error || '未知错误');
+        settle({state:'error',error:d.error || '未知错误'});
+      }
+      if(d.state === 'cancelled'){
+        setProgress(progressStart, '已取消');
+        settle({state:'cancelled'});
+      }
+    };
+    source.onerror = () => { /* 服务器关闭流时静默，EventSource 会继续重连 */ };
+  });
 }
 const stripStamp = s => (s || '').replace(/^\d{2}:\d{2}:\d{2}\s+/, '');
 
@@ -887,16 +976,21 @@ function showAsrDraft(lrc, info){
 }
 
 $('#btnCancel').addEventListener('click', async () => {
-  if(!JOB) return;
-  await fetch('/api/cancel', { method:'POST', body: JSON.stringify({ job: JOB }) });
-  logLine('已请求取消…');
+  BATCH_CANCEL_REQUESTED = true;
+  if(!JOB){ logLine('已请求取消，当前文件尚未提交。'); return; }
+  try {
+    const r = await fetch('/api/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ job: JOB }) });
+    if(!r.ok) throw new Error(`取消请求失败（${r.status}）`);
+    logLine('已请求取消当前文件，批量队列将在此处停止…');
+  } catch(e) {
+    BATCH_CANCEL_REQUESTED = false;
+    showErr('取消失败：' + e.message);
+  }
 });
 
 // ---------------------------------------------------------------- 结果
-async function finish(res){
-  $('#btnRun').disabled = false;
-  $('#btnCancel').disabled = true;
-  setProgress(1, '完成');
+async function finish(res, progressStart=0, progressSpan=1){
+  setProgress(progressStart + progressSpan, '完成');
 
   const base = '/files/' + JOB + '/';
   const v = $('#player');
