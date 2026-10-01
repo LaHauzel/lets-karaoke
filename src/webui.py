@@ -360,6 +360,39 @@ def perform_edit(data, operation=None):
     return out
 
 
+SOFA_CKPT = ROOT / "models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt"
+
+
+def capabilities() -> dict:
+    """按已安装的依赖与模型报告可用功能；只探测模块与文件，不导入模型。"""
+    from importlib.util import find_spec
+
+    def has(*modules):
+        return all(find_spec(m) is not None for m in modules)
+
+    def cap(ok, reason):
+        return {"ok": bool(ok), "reason": "" if ok else reason}
+
+    def complete(directory):
+        return (directory / "config.json").is_file() and any(
+            p.suffix in (".safetensors", ".bin") for p in directory.glob("*"))
+
+    whisper_dir = model_paths.WHISPER_DIR
+    qwen = has("qwen_asr", "transformers")
+    return {
+        "whisper": cap(has("whisper", "stable_whisper", "torch"),
+                       "需要 Whisper 字幕环境：运行 setup_guide.bat 选择 [1]"),
+        "whisper_models": sorted(p.stem for p in whisper_dir.glob("*.pt")) if whisper_dir.is_dir() else [],
+        "sofa": cap(has("lightning", "textgrid", "pykakasi") and SOFA_CKPT.is_file(),
+                    "需要 SOFA 环境（setup_guide.bat 选择 [4]）并放置 SOFA checkpoint"),
+        "asr": cap(qwen and complete(model_paths.QWEN_ASR_DIR) and complete(model_paths.QWEN_ALIGNER_DIR),
+                   "需要 Qwen 环境（setup_guide.bat 选择 [3]）并下载 ASR 与 ForcedAligner 模型"),
+        "qwen": cap(qwen and complete(model_paths.QWEN_ALIGNER_DIR),
+                    "需要 Qwen 环境并下载 ForcedAligner 模型"),
+        "wav2vec2": cap(has("transformers"), "需要 Qwen 环境（含 transformers）"),
+    }
+
+
 def saved_directory(identifier):
     from local_history import resolve
     return resolve(identifier, ROOT / 'out', OUT_ROOT)
@@ -696,7 +729,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
 
     # 第三步：SOFA 推理（窗口内 force 对齐，窗口已含完整演唱）
     # 使用 multilingual 检查点；行分段和 mora 音素由同一份字典生成。
-    ckpt = ROOT / "models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt"
+    ckpt = SOFA_CKPT
     jdict = seg_dir / "ja_job_dict.txt"
     cmd = [sys.executable,
            str(ROOT / "tools/SOFA/infer.py"), "--ckpt", str(ckpt),
@@ -1240,6 +1273,7 @@ class Handler(BaseHTTPRequestHandler):
                     "rule_schema": schema(DEFAULT_RULES),
                     "rule_profiles": {p: resolve_rules(DEFAULT_RULES, profile=p)
                                       for p in ("balanced", "automatic", "legacy")},
+                    "capabilities": capabilities(),
                 })
             if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
@@ -1362,8 +1396,8 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             self._json({'error':str(e)},400)
         except Exception as e:  # noqa: BLE001
-            self._json({"error": f"{type(e).__name__}: {e}\n"
-                                 + traceback.format_exc()[-800:]}, 500)
+            traceback.print_exc()
+            self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
     # ---- 实现 ----------------------------------------------------------
     def _api_run(self):
@@ -1605,7 +1639,16 @@ def main(argv=None) -> int:
     ap.add_argument("--no-open", action="store_true")
     ap.add_argument("--no-warmup", action="store_true", help="跳过模型预热")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--allow-remote", action="store_true",
+                    help="允许监听非回环地址（服务没有登录认证，仅限可信网络）")
     args = ap.parse_args(argv)
+    from http_support import _loopback
+    if not _loopback(args.host.strip("[]").lower()):
+        if not args.allow_remote:
+            print(f"!! 拒绝监听 {args.host}：服务没有登录认证，同一网络中的任何人都能上传、删除记录并读取本机视频。")
+            print("   确需远程访问时追加 --allow-remote，并只在可信网络中使用。")
+            return 2
+        print(f"!! 警告：正在监听 {args.host}，未启用任何认证，请勿在公共网络中使用。")
     DEFAULT_DEVICE = args.device
     STOP_WORKER.clear()
 

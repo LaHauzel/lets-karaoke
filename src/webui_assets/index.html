@@ -177,6 +177,10 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 .rule-help .help-close{float:right;border:0;background:transparent;color:var(--muted);font-size:18px;line-height:1;cursor:pointer;padding:0 0 0 8px}
 .rule-help .help-close:hover{color:var(--fg)}
 @media(max-width:700px){.rule-help{right:10px;top:62px;width:calc(100vw - 20px);max-height:70vh}}
+.seg button:disabled{opacity:.42;cursor:not-allowed}
+.seg button:disabled:hover{background:transparent;color:inherit}
+.invalid{border-color:var(--err)!important;box-shadow:0 0 0 3px #f8514933!important}
+.field-err{color:var(--err);font-size:12px;margin:6px 0 0;white-space:pre-line}
 </style>
 </head>
 <body>
@@ -219,6 +223,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         </div>
         <div class="fn" id="fnMedia"></div>
       </div>
+      <div class="field-err hidden" id="mediaErr" role="alert"></div>
       <input type="file" id="media" accept="video/*,audio/*" multiple class="hidden">
       <input type="file" id="mediaFolder" accept="video/*,audio/*" webkitdirectory directory multiple class="hidden">
       <p class="hint">批量任务会按选择顺序逐个处理；选择多个文件后，可在“逐文件配置”中分别设置歌词、语言和字幕样式。每首默认自动识别歌词语言。</p>
@@ -327,7 +332,8 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         SOFA 当前只支持日语细化：先由 Whisper 定位每行，再按日语音素细化。
         无法映射或细化失败时沿用行窗口并插值；结果需要试听确认。
       </div>
-      <textarea id="lyrics" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;—— 也可粘贴 LRC：[00:12.34]东风送来清凉&#10;—— 没有歌词文件？把上面切到「③ 没歌词 · 自动转写」&#10;—— 没时间戳也行，会自动对齐"></textarea>
+      <div class="field-err hidden" id="lyricsErr" role="alert"></div>
+      <textarea id="lyrics" aria-label="歌词文本" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;—— 也可粘贴 LRC：[00:12.34]东风送来清凉&#10;—— 没有歌词文件？把上面切到「③ 没歌词 · 自动转写」&#10;—— 没时间戳也行，会自动对齐"></textarea>
       <div class="row" style="margin-top:9px">
         <label class="mini" style="text-align:center;padding:7px 0;cursor:pointer;display:block">
           选择歌词文件 <input type="file" id="lyricsFile" accept=".txt,.lrc,.srt,.ass" class="hidden">
@@ -537,7 +543,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 
       <div class="card hidden" id="tuneCard">
       <h2><span class="n">4</span>人工微调对齐<span class="spacer"></span>
-        <span class="badge" id="healthBadge">—</span></h2>
+        <span class="badge" id="healthBadge">待检查</span></h2>
       <p class="hint">给某一行填「偏移 ms」即可整体平移该行（正数延后、负数提前）；
         点 <b>▶</b> 可把播放器跳到该行起点试听。每行的 ⚓ 可独立开关，也可以同时选择多个锚点；修改时间或偏移会自动把该句加入锚点。
         提交后会固定所选句，并重新对齐锚点之间及最后一个锚点之后的歌词；再次点击该行 ⚓ 可取消。</p>
@@ -646,6 +652,7 @@ async function boot(){
   ANCHOR_API_SUPPORTED=meta.features?.multi_anchor===true;
   ASYNC_EDIT_SUPPORTED=meta.features?.async_edit===true;
   window.RULE_META = meta;
+  applyCapabilities(meta.capabilities);
   renderRules();
   const fs = $('#font');
   meta.fonts.forEach(n => {
@@ -663,6 +670,30 @@ async function boot(){
   } catch(e){ $('#devPill').textContent = '任务列表暂时无法连接'; showErr(e.message); }
 }
 boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('初始化失败：'+e.message);});
+
+// 未安装的功能置灰并说明原因，避免提交后才在日志里看到缺少模块。
+function applyCapabilities(caps){
+  if(!caps) return;
+  for(const src of ['whisper', 'sofa', 'asr']){
+    const cap = caps[src], b = document.querySelector(`#segSrc button[data-v="${src}"]`);
+    if(!cap || cap.ok || !b) continue;
+    b.disabled = true;
+    b.title = cap.reason;
+    b.textContent += '（未安装）';
+  }
+  const downloaded = caps.whisper_models || [];
+  for(const o of $('#whisperModel').options){
+    if(!downloaded.includes(o.value)) o.textContent += ' · 未下载，首次使用自动下载';
+  }
+  for(const [value, cap] of [['qwen', caps.qwen], ['wav2vec2', caps.wav2vec2]]){
+    const o = $('#backend').querySelector(`option[value="${value}"]`);
+    if(o && cap && !cap.ok){ o.disabled = true; o.textContent += '（未安装）'; o.title = cap.reason; }
+  }
+  const usable = [...$('#backend').options].find(o => !o.disabled);
+  if(usable && $('#backend').selectedOptions[0]?.disabled) $('#backend').value = usable.value;
+  const current = document.querySelector('#segSrc button.on');
+  if(current?.disabled) document.querySelector('#segSrc button:not(:disabled)')?.click();
+}
 
 async function recoverTasks(serverJobs){
   const jobs=TaskClient.recover(serverJobs,Object.keys(SAVED_TASKS));
@@ -1125,13 +1156,14 @@ $('#btnRun').addEventListener('click', async () => {
   const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
   const queue = items.map(item => item.file);
   const useAsr = (SRC === 'asr');
-  if(!queue.length){ alert('请先选择视频或音频文件'); return; }
+  clearFieldError($('#dropMedia')); clearFieldError($('#lyrics'));
+  if(!queue.length){ return fieldError($('#dropMedia'), $('#mediaErr'), '请先选择视频或音频文件'); }
   if(SRC==='sofa'&&items.some(item=>item.lang!=='ja')){showErr('SOFA 当前仅支持日语细化。请逐个选择文件并确认日语歌词，或改用 Whisper 对齐。');return;}
   if(!useAsr){
     const missing = items.filter(item => !(item.lyrics||'').trim() && !item.lyricsFile);
     if(missing.length){
-      alert(`请为以下文件填写歌词或选择歌词文件：\n${missing.map(item => item.file.name).join('\n')}`);
-      return;
+      return fieldError($('#lyrics'), $('#lyricsErr'),
+        `请为以下文件填写歌词或选择歌词文件，或把「歌词来源」切到「③ 没歌词 · 自动转写」：\n${missing.map(item => item.file.name).join('\n')}`);
     }
   }
   let config;
@@ -1309,6 +1341,22 @@ function showErr(msg){
   b.classList.remove('hidden');
   logLine(msg, true);
 }
+function fieldError(field, box, msg){
+  field.classList.add('invalid');
+  field.setAttribute('aria-invalid', 'true');
+  box.textContent = msg;
+  box.classList.remove('hidden');
+  field.scrollIntoView({ block:'center', behavior:'smooth' });
+}
+function clearFieldError(field){
+  field.classList.remove('invalid');
+  field.removeAttribute('aria-invalid');
+  const box = { dropMedia:'#mediaErr', lyrics:'#lyricsErr' }[field.id];
+  if(box) $(box).classList.add('hidden');
+}
+$('#lyrics').addEventListener('input', () => clearFieldError($('#lyrics')));
+$('#media').addEventListener('change', () => clearFieldError($('#dropMedia')));
+$('#mediaFolder').addEventListener('change', () => clearFieldError($('#dropMedia')));
 
 // ---------------------------------------------------------- ASR 歌词草稿
 function showAsrDraft(lrc, info){
@@ -1439,6 +1487,7 @@ function renderHistory(){
   for(const record of HISTORY.filter(r=>(r.title+' '+r.path).toLowerCase().includes(query))){
     const item=document.createElement('div');item.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)';
     const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.dataset.job=record.job;check.style.cssText='width:auto;margin-top:4px';
+    check.setAttribute('aria-label',`选择 ${record.title}（${record.path}）`);
     check.disabled=historyLocked(record);
     const title=document.createElement('div');title.textContent=record.title;
     const stateLabel={queued:'排队中',running:'处理中',done:'已完成',error:'失败',cancelled:'已取消',interrupted:'已中断'}[record.state]||record.state||'已保存';
