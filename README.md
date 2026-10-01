@@ -57,7 +57,18 @@ setup_venv.bat whisper
 webui_venv.bat
 ```
 
-将 `whisper` 换成 `concert`、`qwen`、`sofa` 或 `full` 可选择相应依赖组合。虚拟环境保存在 `.venv/`；其中的模型下载命令也应使用 `.venv\Scripts\python.exe`。
+将 `whisper` 换成 `concert`、`qwen`、`sofa` 或 `full` 可选择相应依赖组合。虚拟环境保存在 `.venv/`；其中的模型下载命令也应使用 `.venv\Scripts\python.exe`。存在 `.venv` 时，`webui.bat`、`test.bat` 和 `setup_guide.bat` 会自动使用它。
+
+本机默认 Python 不是 3.11 时（例如已有 3.12 供其他项目使用），推荐使用虚拟环境，无需改动系统默认 Python：
+
+```bat
+winget install --id Python.Python.3.11 -e --scope user
+winget install --id Gyan.FFmpeg -e
+rem 关闭并重新打开命令行，让 winget 写入的 PATH 生效
+setup_venv.bat whisper
+```
+
+`setup_venv.bat` 会优先使用 PATH 中的 3.11，找不到时通过 `py -3.11` 创建 `.venv`；已有 `.venv` 不是 3.11 时会提示先改名或删除。注意 Python 安装程序可能把 3.11 放到用户 PATH 最前面，从而改变其他项目使用的默认 `python`，安装后可用 `python --version` 确认，必要时在“编辑账户的环境变量”中调整顺序。首次安装 GPU profile 需要下载约 2.9 GB 的 CUDA 版 PyTorch，pip 在输出被重定向时可能长时间不显示进度。
 
 Windows 用户建议运行 `setup_guide.bat`。它按以下顺序提供可选环境，并在每一步说明功能和显示安装进度：
 
@@ -113,7 +124,7 @@ python src\webui.py --port 8000 --no-open
 
 常用参数：
 
-- `--host`：监听地址，默认 `127.0.0.1`。
+- `--host`：监听地址，默认 `127.0.0.1`。服务没有登录认证；改为 `0.0.0.0` 或局域网地址时必须同时加 `--allow-remote`，否则拒绝启动，并且只应在可信网络中使用。
 - `--port`：监听端口，默认 `7870`。
 - `--no-open`：启动后不自动打开浏览器。
 - `--no-warmup`：跳过启动时的模型预热。
@@ -168,10 +179,16 @@ test.bat
 
 GPU 环境下可以分别验证中文、英文和日文的带歌词流程。测试会覆盖纯文本歌词以及带行时间戳的 LRC：
 
-音频不随Git提交；新克隆请先运行 `python src\gen_synth.py --tts sapi`，使用已安装的本机中文/英文/日文语音生成测试素材和真值。
+仓库已包含一套合成测试素材与真值（`data/synth/`）；需要重新生成时运行 `python src\gen_synth.py --tts sapi`，它会使用本机中文/英文/日文语音并覆盖现有素材。
 
 ```bat
 python tests\e2e_p1.py --device cuda
+```
+
+`e2e_p1.py` 使用 Qwen ForcedAligner 后端，需要 Qwen profile 和 ForcedAligner 模型；只安装 Whisper profile 时会报缺少 `qwen_asr`。此时可用下面的命令验证 Whisper 带歌词流程（使用 `base` 模型和 Demucs 分离）：
+
+```bat
+python tests\system_smoke_test.py --lang zh
 ```
 
 端到端测试要求完整歌词映射、结构健康、产物存在，并默认限制合成 token 起点 P90 不超过 250ms；可用 `--max-start-p90-ms` 调整回归预算。详情见 [验证矩阵](docs/VALIDATION.md)。

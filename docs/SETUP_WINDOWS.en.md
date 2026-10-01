@@ -125,11 +125,22 @@ python --version
 where python
 ~~~
 
-Install the tested Python 3.11.x and reopen the terminal so the installer and launcher use the same interpreter.
+Install the tested Python 3.11.x and reopen the terminal so the installer and launcher use the same interpreter. If the default `python` is another version (for example 3.12), keep it and use a virtual environment:
+
+~~~bat
+winget install --id Python.Python.3.11 -e --scope user
+setup_venv.bat whisper
+~~~
+
+`setup_venv.bat` creates `.venv` through `py -3.11`. If it reports that an existing `.venv` is not 3.11, rename or delete that folder and retry. The Python installer may move 3.11 to the front of the user PATH, changing the default `python` for other projects; confirm with `python --version`.
 
 ### FFmpeg is not found
 
-Add FFmpeg's bin directory to PATH, reopen the terminal, and verify that ffmpeg -version and ffprobe -version both run.
+Add FFmpeg's bin directory to PATH, reopen the terminal, and verify that ffmpeg -version and ffprobe -version both run. `winget install --id Gyan.FFmpeg -e` is recommended; winget only updates newly opened terminals, including a fresh setup assistant window.
+
+### "is not recognized as an internal or external command" at startup
+
+Older `webui.bat` versions contained UTF-8 Chinese comments that cmd misparsed under the GBK (936) code page. The script is now ASCII-only; keep `.bat` files ASCII when editing them.
 
 ### CUDA is unavailable
 

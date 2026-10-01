@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+if exist "%~dp0.venv\Scripts\python.exe" set "PATH=%~dp0.venv\Scripts;%PATH%"
 chcp 65001 >nul
 set "PYTHONUTF8=1"
 title lets-karaoke setup assistant

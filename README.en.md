@@ -56,7 +56,18 @@ setup_venv.bat whisper
 webui_venv.bat
 ```
 
-Replace `whisper` with `concert`, `qwen`, `sofa`, or `full` as needed. The environment lives in `.venv/`; use `.venv\Scripts\python.exe` for model downloads when using this option.
+Replace `whisper` with `concert`, `qwen`, `sofa`, or `full` as needed. The environment lives in `.venv/`; use `.venv\Scripts\python.exe` for model downloads when using this option. When `.venv` exists, `webui.bat`, `test.bat`, and `setup_guide.bat` use it automatically.
+
+If the default `python` is not 3.11 (for example 3.12 used by other projects), use the virtual environment instead of changing the system default:
+
+```bat
+winget install --id Python.Python.3.11 -e --scope user
+winget install --id Gyan.FFmpeg -e
+rem Close and reopen the terminal so the PATH written by winget takes effect
+setup_venv.bat whisper
+```
+
+`setup_venv.bat` prefers a 3.11 `python` on PATH and otherwise creates `.venv` through `py -3.11`; it stops with a message if an existing `.venv` was not created with 3.11. The Python installer may move 3.11 to the front of the user PATH and change the default `python` for other projects; check `python --version` afterwards. The first GPU profile install downloads a ~2.9 GB CUDA PyTorch wheel, and pip may show no progress while output is redirected.
 
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
@@ -117,7 +128,7 @@ python src\webui.py --port 8000 --no-open
 
 Common options:
 
-- `--host`: bind address; defaults to `127.0.0.1`.
+- `--host`: bind address; defaults to `127.0.0.1`. The service has no authentication: a non-loopback address such as `0.0.0.0` also requires `--allow-remote`, otherwise the server refuses to start. Use it only on trusted networks.
 - `--port`: listen port; defaults to `7870`.
 - `--no-open`: do not open a browser automatically.
 - `--no-warmup`: skip model warmup at startup.
@@ -162,7 +173,7 @@ The source video is never modified. Cancelling an export removes unfinished clip
 
 ## Tests
 
-For GPU synthetic checks on a fresh clone, first run `python src\gen_synth.py --tts sapi` with local Chinese, English, and Japanese SAPI voices installed. Audio files are excluded from Git. Integration success requires full text coverage, valid subtitle structure, nonempty outputs, and a default synthetic token start P90 budget of 250ms; see the [validation matrix](docs/VALIDATION.md).
+The repository includes a synthetic sample set and ground truth under `data/synth/`; `python src\gen_synth.py --tts sapi` regenerates it with local Chinese, English, and Japanese SAPI voices and overwrites the existing files. `tests\e2e_p1.py` uses the Qwen ForcedAligner backend and needs the Qwen profile and model; with only the Whisper profile, run `python tests\system_smoke_test.py --lang zh` to check the Whisper known-lyrics route. Integration success requires full text coverage, valid subtitle structure, nonempty outputs, and a default synthetic token start P90 budget of 250ms; see the [validation matrix](docs/VALIDATION.md).
 
 The test suite uses repository-generated synthetic audio and video and does not read personal media:
 

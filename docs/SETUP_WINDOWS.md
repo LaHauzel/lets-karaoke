@@ -129,11 +129,22 @@ python --version
 where python
 ~~~
 
-如果低于 3.11，安装新版 Python 并重新打开命令行。
+安装脚本只接受 Python 3.11.x。默认 `python` 是其他版本（例如 3.12）时，不必替换它：
+
+~~~bat
+winget install --id Python.Python.3.11 -e --scope user
+setup_venv.bat whisper
+~~~
+
+`setup_venv.bat` 会通过 `py -3.11` 创建 `.venv`。若提示已有 `.venv` 不是 3.11，把该文件夹改名或删除后重试。Python 安装程序可能把 3.11 放到用户 PATH 最前面，从而改变其他项目的默认 `python`，请用 `python --version` 确认。
 
 ### FFmpeg 找不到
 
-把 FFmpeg 的 bin 目录加入 PATH，重新打开命令行后确认 ffmpeg -version 和 ffprobe -version 都能执行。
+把 FFmpeg 的 bin 目录加入 PATH，重新打开命令行后确认 ffmpeg -version 和 ffprobe -version 都能执行。推荐 `winget install --id Gyan.FFmpeg -e`；winget 只更新新打开的命令行，已打开的窗口（包括正在运行的安装助手）需要重新打开。
+
+### 启动时出现“不是内部或外部命令”
+
+旧版 `webui.bat` 含 UTF-8 中文注释，中文 Windows 的 cmd 按 GBK 解析时会打印 `'可。默认 http:' 不是内部或外部命令`。当前脚本已改为纯 ASCII；自行修改 `.bat` 时请保持 ASCII。
 
 ### CUDA 不可用
 
