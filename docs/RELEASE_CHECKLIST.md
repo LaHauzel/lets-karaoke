@@ -7,7 +7,7 @@
 - [x] README/中英安装指南明确已验证Python3.11、GPU组合和可选虚拟环境
 - [x] 模型、媒体、缓存、运行结果与私人审计产物由 `.gitignore` 排除
 - [x] 直接依赖/模型许可边界、可选GPL组件已记录
-- [x] 远端Windows/CPU/Node [Actions实际运行通过](https://github.com/LaHauzel/lets-karaoke/actions/runs/36805697316)：146项中145通过、1项可选YAMNet跳过；该项已本机通过
+- [x] 修复提交 `7a95d6b` 的远端Windows/CPU/Node [Actions实际运行通过](https://github.com/LaHauzel/lets-karaoke/actions/runs/36881273100)：187项中186通过、1项可选YAMNet跳过；该项已本机通过
 - [x] 第二台Windows按README新建3.11 `.venv`，Whisper/concert安装检查与Whisper+Demucs GPU短片通过
 - [ ] 完整Qwen/SOFA环境在全新Windows按文档安装、模型下载和GPU短片测试通过
 - [ ] 有授权真实歌声及演唱会边界真值集达到发布质量目标
