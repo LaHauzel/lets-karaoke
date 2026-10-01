@@ -8,12 +8,13 @@
 | --- | --- | --- |
 | `test.bat` | 146项Python回归全部通过；独立环境相同146项通过；另运行ASR离线自检 | 逻辑、真实HTTP/FFmpeg/libass、历史/队列恢复、进程树回收；本机没有跳过 |
 | Node前端 | 11/11状态机回归；Python测试入口会调用 | SSE终态、轮询/恢复、取消、任务/历史别名；不是全部页面自动点击测试 |
+| Windows CI | [GitHub Actions通过](https://github.com/LaHauzel/lets-karaoke/actions/runs/36805697316)：146项中145项通过、1项可选YAMNet测试跳过；ASR自检通过 | 独立Windows/CPU/Python3.11/Node22环境；不证明完整GPU安装与真实歌声质量 |
 | GPU合成 | 8/8通过质量门槛，最差起点P90约211.6ms | Qwen管线，三种语言、TXT/LRC、两种混音分离 |
 | 补充流程 | 中文ASR→Whisper、日语Whisper→SOFA完成，SOFA细化3行；网页英文Whisper两项完成 | 各路线能处理并出片，不代表真实歌声准确率 |
 | 演唱会模块 | 30项回归在系统Python和独立环境通过 | 本机真实YAMNet全段/分批一致、真实FFmpeg取消/恢复、迁移并发、缓存和版本；新增403/415同连接回归 |
 | 浏览器 | 两文件提交后刷新续跑、异步插入、历史别名草稿恢复、未提交文字/上次记录恢复、生成v1和回退v0 | 关键路径人工自动化操作；编辑取消等另由回归覆盖 |
 
-本机为Windows11、Python3.11.8、PyTorch/torchaudio2.9.0+cu128、RTX5090 D v2约24GiB。GitHub Actions[首轮运行](https://github.com/LaHauzel/lets-karaoke/actions/runs/36803959928)暴露了新CPU集成测试使用`libx264`时误选NVENC的问题；现已规范编码器别名并加入未知名称回归，正在重新验证远端结果。CI不下载大型模型或个人媒体，涉及本机可选权重的测试在权重缺失时会明确跳过。
+本机为Windows11、Python3.11.8、PyTorch/torchaudio2.9.0+cu128、RTX5090 D v2约24GiB。GitHub Actions[首轮运行](https://github.com/LaHauzel/lets-karaoke/actions/runs/36803959928)暴露了新CPU集成测试使用`libx264`时误选NVENC的问题；规范编码器别名并加入未知名称回归后，[修复提交df57a45的远端运行](https://github.com/LaHauzel/lets-karaoke/actions/runs/36805697316)已成功。CI不下载大型模型或个人媒体，146项中仅本机可选YAMNet整段/分批模型测试因缺少权重/运行库跳过；此项已在本机两套环境通过。
 
 离线测试依赖：`python -m pip install -r requirements-test.txt`；需要FFmpeg/FFprobe，前端回归需要Node.js22。没有Node时本地会明确跳过，CI会安装Node执行。CPU回归不要求PyTorch/CUDA。
 
