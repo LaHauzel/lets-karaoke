@@ -2,7 +2,7 @@
 
 第一次使用请先看 [图解使用手册](USER_GUIDE.md)，其中包含网页截图和完整操作流程。
 
-下文的 profile 指功能依赖组合，直接安装到系统默认 `python`，不会创建独立或虚拟环境。
+下文的 profile 指功能依赖组合。默认安装到命令行中的 Python 3.11，也可用 `setup_venv.bat <profile>` 安装到独立 `.venv/`，然后用 `webui_venv.bat` 启动。
 
 这份指南适用于仓库根目录的 setup_guide.bat。安装助手按功能提供五个独立环境 profile；每个 profile 都会显示用途、安装进度，并在安装结束后运行对应的环境检查。
 
@@ -13,16 +13,16 @@
 | 选项 | 环境 | 提供的功能 | GPU/CUDA | 模型 |
 | --- | --- | --- | --- | --- |
 | 1 | Whisper 字幕环境 | 已有歌词的 Whisper/stable-ts 对齐、字幕渲染、可选 Demucs 人声分离 | 需要 | Whisper |
-| 2 | 演唱会切割最小环境 | 长视频音频分析、音量轴交互编辑（含边界吸附）、FFmpeg 分段导出 | 不需要 | 不需要 |
+| 2 | 演唱会切割最小环境 | 长视频音频分析、讲话/音乐提示、音量轴交互编辑（含边界吸附）、FFmpeg 分段导出 | 不需要 | 小型 YAMNet（约 15.4 MiB，CPU） |
 | 3 | Qwen 完整字幕环境 | Whisper 功能，加 Qwen ForcedAligner、ASR 歌词草稿和 Wav2Vec2 支持 | 需要 | Whisper、ForcedAligner、ASR |
 | 4 | SOFA 歌声对齐环境 | Whisper 行窗口，加 SOFA 音素级歌声对齐 | 需要 | Whisper、SOFA checkpoint |
-| 5 | 完整环境 | Whisper、Qwen、SOFA、Demucs 和全部字幕后端 | 需要 | Whisper、Qwen、SOFA |
+| 5 | 完整环境 | Whisper、Qwen、SOFA、Demucs 和全部字幕后端 | 需要 | Whisper、Qwen、SOFA、小型 YAMNet |
 
-依赖和模型分开安装。选择 profile 只安装 Python 依赖，不会自动下载多个 GB 的模型。这样只做演唱会切割时可以只安装第 2 项，不需要 CUDA、Whisper、Qwen 或 SOFA。
+依赖和大型字幕模型分开安装。选择第 2 项还会下载约 15.4 MiB 的 YAMNet 音频分类模型，用于标记疑似讲话区间；它不需要 GPU，也不会自动改动切点。只做演唱会切割时仍不需要 CUDA、Whisper、Qwen 或 SOFA。
 
 ## 前置条件
 
-1. 安装 Python 3.11 或更高版本，并确认命令行中的 python 指向该版本。
+1. 安装 Python 3.11.x 64 位，并确认命令行中的 python 指向该版本。安装脚本会拒绝其他版本，避免第三方模型依赖在未验证环境中混装。
 2. 安装 FFmpeg，将包含 ffmpeg.exe 和 ffprobe.exe 的目录加入 PATH。
 3. 第 1、3、4、5 项需要 NVIDIA 驱动和可用 CUDA；第 2 项不需要 GPU。
 4. 首次安装请预留足够磁盘空间。依赖安装和模型下载会显示 pip/下载器的实时进度。
@@ -43,9 +43,18 @@ ffprobe -version
 setup_guide.bat
 ~~~
 
+希望隔离现有 Python 依赖时，改用：
+
+~~~bat
+setup_venv.bat whisper
+webui_venv.bat
+~~~
+
+把 `whisper` 替换为需要的 profile。模型下载和检查也要使用 `.venv\Scripts\python.exe`，或先激活 `.venv\Scripts\activate.bat`。GPU 安装脚本只复用通过 PyTorch/torchaudio 2.9.0、CUDA 12.8 与真实 GPU 张量运算检查的组合。
+
 然后按用途选择：
 
-- 只切割演唱会：选择 **[2]**。它安装 requirements-concert.txt，完成后即可启动 WebUI 的演唱会标签。
+- 只切割演唱会：选择 **[2]**。它安装 requirements-concert.txt 和小型本地讲话/音乐分类器，完成后即可启动 WebUI 的演唱会标签。
 - 使用已有歌词做 Whisper 对齐：选择 **[1]**，再选择 **[6]** 下载 Whisper checkpoint。
 - 使用 Qwen 对齐或无歌词自动转写：选择 **[3]**，再选择 **[6]** 和 **[7]** 下载需要的模型。
 - 使用 SOFA：选择 **[4]**，再选择 **[6]**，并手动放置 SOFA checkpoint。

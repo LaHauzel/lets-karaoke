@@ -42,6 +42,14 @@ class AcceptanceTests(unittest.TestCase):
         aligned['diagnostics']['lines'][0]['confidence'] = None
         self.assertEqual(assess(aligned, ['a'], 3)['status'], 'needs_review')
 
+    def test_full_line_flash_requires_fix_but_short_interjection_is_reviewed(self):
+        phrase = {'lines': [row('whole lyric phrase', 1, 1.2)],
+                  'diagnostics': {'lines': [{'row': 1, 'confidence': .9}]}}
+        self.assertEqual(assess(phrase, ['whole lyric phrase'], 3)['status'], 'needs_fix')
+        interjection = {'lines': [row('Ah', 1, 1.2)],
+                        'diagnostics': {'lines': [{'row': 1, 'confidence': .9}]}}
+        self.assertEqual(assess(interjection, ['Ah'], 3)['status'], 'needs_review')
+
     def test_edits_preserve_missing_but_invalidate_old_evidence(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = Path(tmp)

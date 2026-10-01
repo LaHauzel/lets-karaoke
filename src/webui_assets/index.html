@@ -8,6 +8,7 @@
 <script src="/diagnostics.js"></script>
 <link rel="stylesheet" href="/review.css">
 <script src="/lyric_waveform.js"></script>
+<script src="/task_client.js"></script>
 <style>
 :root{
   --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
@@ -36,6 +37,14 @@ header h1{font-size:16px;margin:0;font-weight:600;letter-spacing:.3px}
 .spacer{flex:1}
 .wrap{display:grid;grid-template-columns:minmax(360px,430px) 1fr;gap:16px;padding:16px;align-items:start}
 @media(max-width:1080px){.wrap{grid-template-columns:1fr}}
+.review-layout{display:grid;grid-template-columns:minmax(0,1fr);gap:0;align-items:start}
+@media(min-width:1400px){
+  .review-layout{grid-template-columns:minmax(340px,.9fr) minmax(480px,1.1fr);gap:12px}
+  #resultCard{position:sticky;top:72px;align-self:start;max-height:calc(100vh - 88px);overflow:auto;scrollbar-color:#3a4756 var(--panel)}
+  #resultCard .result-media{position:sticky;top:0;z-index:3;margin:-14px -16px 0;padding:14px 16px 8px;background:var(--panel);border-bottom:1px solid var(--line)}
+  #resultCard video{max-height:45vh;object-fit:contain}
+  .review-layout>.card{margin-bottom:0;min-width:0}
+}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 16px;margin-bottom:16px}
 .card h2{font-size:13px;margin:0 0 12px;color:var(--muted);font-weight:600;
   text-transform:uppercase;letter-spacing:.8px;display:flex;align-items:center;gap:8px}
@@ -97,6 +106,7 @@ video{width:100%;border-radius:8px;background:#000;display:block;aspect-ratio:16
 .style-preview video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border-radius:0}
 .style-preview-placeholder{position:absolute;inset:0;display:grid;place-content:center;text-align:center;color:#c7d4df;background:linear-gradient(145deg,#263847,#101820 55%,#253440);font-size:13px}
 .style-preview-caption{position:absolute;left:var(--caption-x,50%);top:var(--caption-y,89%);transform:translate(-50%,-100%);max-width:92%;text-align:center;white-space:pre-wrap;overflow-wrap:anywhere;font-weight:700;line-height:1.15;pointer-events:none}
+.style-preview-caption.position-selected{outline:1px dashed #58a6ff;outline-offset:4px}
 .style-preview-caption.current{background:linear-gradient(90deg,var(--caption-sung,#ffd24a) 0 52%,var(--caption-unsung,#fff) 52%);color:transparent;background-clip:text;-webkit-background-clip:text;-webkit-text-stroke:var(--caption-outline,1px) #101010;text-shadow:0 2px 4px #000b}
 .style-preview-caption.future{color:#b0b8c4;text-shadow:0 2px 4px #000b;-webkit-text-stroke:var(--caption-outline,1px) #101010}
 .frame-tools{display:grid;grid-template-columns:minmax(0,1fr) 92px;gap:10px;align-items:center;margin-top:7px}
@@ -122,6 +132,10 @@ tr.playing-line td:first-child{box-shadow:inset 3px 0 var(--accent);color:var(--
 td.txt{max-width:230px;overflow:hidden;text-overflow:ellipsis;color:var(--fg)}
 td.num{font-family:ui-monospace,Consolas,monospace;color:var(--muted);font-size:12px}
 td input[type=number]{width:80px;padding:3px 7px;font-size:12.5px}
+td input.time-input{width:104px;padding:3px 6px;font-size:12px;font-variant-numeric:tabular-nums}
+td input.line-lyric-input{width:220px;max-width:32vw;padding:5px 7px;font-size:12.5px}
+.inline-insert-editor{background:#ffffff05}
+.inline-insert-editor td{padding:10px}
 .hint{font-size:12px;color:var(--muted);margin:8px 0 0;line-height:1.7}
 .hint code{background:var(--panel2);padding:1px 5px;border-radius:4px;font-size:11.5px}
 details{margin-top:10px}
@@ -131,6 +145,20 @@ summary:before{content:"▸ ";color:var(--accent)}
 details[open] summary:before{content:"▾ "}
 .err{color:var(--err);font-size:12.5px;margin-top:10px;white-space:pre-wrap;word-break:break-all}
 .hidden{display:none!important}
+.review-details{margin-top:12px;border-top:1px solid var(--line);padding-top:10px}
+.review-details>summary{display:flex;align-items:center;gap:10px;min-height:30px;color:var(--fg);font-weight:600}
+.review-summary-meta{margin-left:auto;color:var(--muted);font-size:11px;font-weight:400;text-align:right}
+.review-summary-meta[data-status=needs_fix]{color:var(--err)}
+.review-summary-meta[data-status=needs_review]{color:var(--warn)}
+.review-summary-meta[data-status=ready_for_spot_check]{color:var(--ok)}
+.review-details-body{padding-top:8px}
+.review-details-body>.dl{margin-top:0}
+.result-media h2{margin-bottom:10px}
+.tune-table-wrap{max-height:min(62vh,720px)}
+tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(--warn)}
+.anchor-toggle{width:30px;height:30px;padding:0!important;color:var(--muted)!important}
+.anchor-toggle[aria-pressed=true]{background:#d2992222!important;border-color:var(--warn)!important;color:var(--warn)!important}
+.anchor-toggle:disabled{opacity:.35;cursor:not-allowed}
 .badge{font-size:11px;padding:2px 8px;border-radius:99px;background:var(--panel2);border:1px solid var(--line);color:var(--muted)}
 .badge.ok{color:var(--ok);border-color:#2ea04366}
 .badge.bad{color:var(--err);border-color:#f8514966}
@@ -193,19 +221,19 @@ details[open] summary:before{content:"▾ "}
       </div>
       <input type="file" id="media" accept="video/*,audio/*" multiple class="hidden">
       <input type="file" id="mediaFolder" accept="video/*,audio/*" webkitdirectory directory multiple class="hidden">
-      <p class="hint">批量任务会按选择顺序逐个处理；选择多个文件后，可在“逐文件配置”中分别设置歌词和字幕样式。</p>
+      <p class="hint">批量任务会按选择顺序逐个处理；选择多个文件后，可在“逐文件配置”中分别设置歌词、语言和字幕样式。每首默认自动识别歌词语言。</p>
       <div id="mediaQueueBox" class="hidden" style="margin-top:10px;padding:10px;border:1px solid var(--line);border-radius:8px">
         <div style="display:flex;justify-content:space-between;gap:8px;align-items:center;flex-wrap:wrap">
           <b>逐文件配置</b><span class="hint" id="mediaActiveName" style="margin:0"></span>
         </div>
         <div id="mediaQueueList" style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px"></div>
-        <p class="hint" style="margin-bottom:0">点击文件后，在上方歌词区和下方字幕样式区编辑；修改只应用于当前文件。每个文件会生成独立历史记录。</p>
+        <p class="hint" style="margin-bottom:0">点击文件后，在歌词区、语言选项和字幕样式区编辑；修改只应用于当前文件。每个文件会生成独立历史记录。</p>
       </div>
 
       <label class="fl">歌词来源（三选一 · 不确定就选第一个）</label>
       <div class="seg" id="segSrc" style="margin-bottom:7px">
         <button data-v="whisper" class="on">① 我有歌词 · whisper 对齐</button>
-        <button data-v="sofa">② 我有歌词 · SOFA 对齐</button>
+        <button data-v="sofa">② 日语歌词 · SOFA 实验</button>
         <button data-v="asr">③ 没歌词 · 自动转写</button>
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
@@ -214,19 +242,19 @@ details[open] summary:before{content:"▾ "}
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           模型
           <select id="whisperModel" style="width:auto;padding:3px 6px">
-            <option value="large-v3">large-v3（最准）</option>
-            <option value="medium">medium（快）</option>
-            <option value="base">base（最快）</option>
+            <option value="large-v3">large-v3（较大模型）</option>
+            <option value="medium">medium（较小模型）</option>
+            <option value="base">base（轻量模型）</option>
           </select>
         </label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
           <input type="checkbox" id="useVocalGuide" checked style="width:auto;margin:0">
-          人声能量引导（多花约 30-60s，修抢跑/拖尾）
+          人声能量辅助修正（需要分离与分析，增加处理时间）
         </label>
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer"
-               title="实测：现场版/密集伴奏上喂干声平均词概率 0.63→0.67、耗时 −25%；干净录音打平。两个开关都关才会跳过分离。">
+               title="用分离出的人声尝试减少伴奏干扰；分离伪影也可能影响时间轴。与能量引导共用分离结果，实际效果需要试听确认。">
           <input type="checkbox" id="useAlignVocals" checked style="width:auto;margin:0">
-          对齐喂人声干声（更准 · 复用同一次分离）
+          使用分离人声对齐（复用同一次分离）
         </label>
       </div>
       <label>对齐策略
@@ -291,14 +319,13 @@ details[open] summary:before{content:"▾ "}
       </div>
       <div id="asrHint" class="hidden"
            style="font-size:12px;color:var(--warn);margin:-4px 0 9px">
-        ⚠ 转写前请把下面的「歌词语言」从「自动」改成实际语言。实测自动判别会把
-        日文歌误判成英文，转写量翻一倍多且大量幻觉。
+        ⚠ 建议将下面的「歌词语言」改成实际语言。自动判别可能误判现场歌曲，
+        造成错字或多余文本；生成的歌词草稿需要校对。
       </div>
       <div id="sofaHint" class="hidden"
            style="font-size:12px;color:var(--tx2);margin:-4px 0 9px">
-        SOFA（实验性）＝歌声专用音素级对齐：先由 whisper 定位每行，再用 SOFA
-        在行内细化到 mora（日语假名）粒度。使用系统 Python 的 SOFA 依赖；
-        英文行会自动回退用 whisper 时间。
+        SOFA 当前只支持日语细化：先由 Whisper 定位每行，再按日语音素细化。
+        无法映射或细化失败时沿用行窗口并插值；结果需要试听确认。
       </div>
       <textarea id="lyrics" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;—— 也可粘贴 LRC：[00:12.34]东风送来清凉&#10;—— 没有歌词文件？把上面切到「③ 没歌词 · 自动转写」&#10;—— 没时间戳也行，会自动对齐"></textarea>
       <div class="row" style="margin-top:9px">
@@ -336,8 +363,8 @@ details[open] summary:before{content:"▾ "}
           <div>
             <label class="fl">人声分离模型</label>
             <select id="demucs">
-              <option value="htdemucs_ft">htdemucs_ft（最准·较慢）</option>
-              <option value="htdemucs">htdemucs（快）</option>
+              <option value="htdemucs_ft">htdemucs_ft（微调模型·较慢）</option>
+              <option value="htdemucs">htdemucs（基础模型）</option>
             </select>
           </div>
           <div>
@@ -369,7 +396,7 @@ details[open] summary:before{content:"▾ "}
         <input type="range" id="quality" min="14" max="30" value="21">
         <label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:13px">
           <input type="checkbox" id="separate" checked style="width:auto">
-          做人声分离（显著提升对齐精度；关闭可提速）
+          做人声分离（尝试减少伴奏干扰；需要额外处理时间）
         </label>
       </details>
     </div>
@@ -399,14 +426,21 @@ details[open] summary:before{content:"▾ "}
           <input type="color" id="unsung" value="#FFFFFF">
         </div>
       </div>
+      <label class="fl" style="margin-top:8px">逐行调整字幕位置</label>
+      <select id="positionRow" aria-label="选择要调整位置的字幕行">
+        <option value="0">第 1 行 · 当前演唱句</option>
+        <option value="1">第 2 行 · 下一句</option>
+        <option value="2">第 3 行 · 后续歌词</option>
+      </select>
+      <p class="hint">先选择字幕行，再单独调整它的水平和垂直位置；每行位置会随当前文件和字幕版本保存。</p>
       <div class="row" style="margin-top:8px">
         <div>
-          <label class="fl">字幕位置 · 水平 X <b id="positionXVal" style="color:var(--fg)">50%</b></label>
+          <label class="fl">所选行位置 · 水平 X <b id="positionXVal" style="color:var(--fg)">50%</b></label>
           <input type="range" id="positionX" min="5" max="95" value="50">
         </div>
         <div>
-          <label class="fl">字幕位置 · 垂直 Y（顶部 → 底部）<b id="positionYVal" style="color:var(--fg)">89%</b></label>
-          <input type="range" id="positionY" min="4" max="92" value="89">
+          <label class="fl">所选行位置 · 垂直 Y（顶部 → 底部）<b id="positionYVal" style="color:var(--fg)">89%</b></label>
+          <input type="range" id="positionY" min="4" max="96" step="0.1" value="89">
         </div>
       </div>
       <label class="fl">同时显示的歌词行数</label>
@@ -443,8 +477,8 @@ details[open] summary:before{content:"▾ "}
         日文整单元高亮<span class="badge" style="margin-left:6px">日文推荐</span>
       </label>
       <p class="hint">日文被 nagisa 并成一个单元的多个字（如 <code>渡って</code>），
-        单元内逐字时刻只能靠插值估算，最多可偏约 300ms。勾选后按单元整体高亮，
-        只依赖模型可靠的单元边界。</p>
+        单元内逐字时刻使用插值估算，与真实唱词时刻可能有偏差。勾选后按单元整体高亮，
+        减少对单元内部插值时刻的依赖；边界仍需试听复核。</p>
     </div>
   </div>
 
@@ -464,43 +498,51 @@ details[open] summary:before{content:"▾ "}
       <div class="err hidden" id="errBox"></div>
     </div>
 
-    <div class="card hidden" id="resultCard">
-      <h2>成片</h2>
-      <video id="player" controls playsinline></video>
-      <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px">
-        <button class="ghost" id="jumpPlayingLine">定位当前播放歌词 ↓</button>
-        <label><input type="checkbox" id="followPlayingLine" style="width:auto"> 微调表自动跟随</label>
-        <span class="hint" id="playingLineInfo"></span>
+    <div class="review-layout">
+      <div class="card hidden" id="resultCard">
+        <div class="result-media">
+          <h2>成片</h2>
+          <video id="player" controls playsinline></video>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px">
+            <button class="ghost" id="jumpPlayingLine">定位当前播放歌词 ↓</button>
+            <label><input type="checkbox" id="followPlayingLine" style="width:auto"> 微调表自动跟随</label>
+            <span class="hint" id="playingLineInfo"></span>
+          </div>
+        </div>
+        <details id="reviewDetails" class="review-details">
+          <summary><span>下载、验收与诊断</span><span id="reviewSummaryMeta" class="review-summary-meta">展开查看处理信息</span></summary>
+          <div class="review-details-body">
+            <div class="dl" id="dlBox"></div>
+            <div id="acceptanceBox" class="review-box" role="status"></div>
+            <button class="ghost" id="btnRetry" style="width:auto">局部重试疑难句 · 生成新版本</button>
+            <p id="retryMsg" class="hint"></p>
+            <div id="waveformHost"></div>
+            <div id="alignmentDiagnostics"></div>
+            <details id="asrBox" class="hidden" style="margin-top:10px">
+              <summary>ASR 自动转写的歌词草稿（可复制校对 / 直接改字幕）</summary>
+              <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="asrInfo"></div>
+              <textarea id="asrDraft" readonly spellcheck="false"
+                style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+            </details>
+            <details id="whisperBox" class="hidden" style="margin-top:10px">
+              <summary>whisper 对齐诊断（逐字时间轴 · 建议复核低置信行）</summary>
+              <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="whisperInfo"></div>
+              <textarea id="whisperDraft" readonly spellcheck="false"
+                style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
+            </details>
+            <div class="stat" id="statBox"></div>
+          </div>
+        </details>
       </div>
-      <div class="dl" id="dlBox"></div>
-      <div id="acceptanceBox" class="review-box" role="status"></div>
-      <button class="ghost" id="btnRetry" style="width:auto">局部重试疑难句 · 生成新版本</button>
-      <p id="retryMsg" class="hint"></p>
-      <div id="waveformHost"></div>
-      <div id="alignmentDiagnostics"></div>
-      <details id="asrBox" class="hidden" style="margin-top:10px">
-        <summary>ASR 自动转写的歌词草稿（可复制校对 / 直接改字幕）</summary>
-        <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="asrInfo"></div>
-        <textarea id="asrDraft" readonly spellcheck="false"
-          style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
-      </details>
-      <details id="whisperBox" class="hidden" style="margin-top:10px">
-        <summary>whisper 对齐诊断（逐字时间轴 · 建议复核低置信行）</summary>
-        <div style="opacity:.72;font-size:12px;margin:8px 0 6px" id="whisperInfo"></div>
-        <textarea id="whisperDraft" readonly spellcheck="false"
-          style="width:100%;height:190px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></textarea>
-      </details>
-      <div class="stat" id="statBox"></div>
-    </div>
 
-    <div class="card hidden" id="tuneCard">
+      <div class="card hidden" id="tuneCard">
       <h2><span class="n">4</span>人工微调对齐<span class="spacer"></span>
         <span class="badge" id="healthBadge">—</span></h2>
       <p class="hint">给某一行填「偏移 ms」即可整体平移该行（正数延后、负数提前）；
-        点 <b>▶</b> 可把播放器跳到该行起点试听。改完点「应用并重新渲染」——
-        只重跑字幕与编码，不重新对齐，通常几秒完成。</p>
+        点 <b>▶</b> 可把播放器跳到该行起点试听。每行的 ⚓ 可独立开关，也可以同时选择多个锚点；修改时间或偏移会自动把该句加入锚点。
+        提交后会固定所选句，并重新对齐锚点之间及最后一个锚点之后的歌词；再次点击该行 ⚓ 可取消。</p>
       <div id="missingLyricAlert" class="hidden" style="margin:8px 0;padding:9px 11px;border:1px solid #d2992266;border-radius:8px;background:#d2992212;color:var(--warn)"></div>
-      <div class="tblwrap" style="margin-top:10px">
+      <div class="tblwrap tune-table-wrap" style="margin-top:10px">
         <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px">
           <label>查看 / 继续编辑版本 <select id="tuneVersion" style="width:auto"></select></label>
           <label>试听速度 <select id="tuneSpeed" style="width:auto"><option value="1">1×</option><option value="0.75">0.75×</option><option value="0.5">0.5×</option></select></label>
@@ -509,7 +551,7 @@ details[open] summary:before{content:"▾ "}
         <p class="hint">展开歌词可逐字/词填写偏移。偏移相对于当前选中版本，整行与字词偏移会相加。播放器显示已渲染版本，提交后才会更新高亮；时间顺序冲突会被自动整理，需复核结果。</p>
         <table>
           <thead><tr>
-            <th style="width:38px">#</th><th>歌词</th><th>起点（秒）</th><th>终点（秒）</th>
+            <th style="width:38px">#</th><th>歌词</th><th style="width:48px">插入</th><th style="width:48px">锚点</th><th>起点（分:秒）</th><th>终点（分:秒）</th>
             <th style="width:96px">偏移 ms</th><th style="width:40px"></th>
           </tr></thead>
           <tbody id="tuneBody"></tbody>
@@ -517,24 +559,15 @@ details[open] summary:before{content:"▾ "}
       </div>
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
         <button class="primary" id="btnRerender" style="width:auto;flex:1">应用并重新渲染</button>
+        <button class="ghost hidden" id="btnDiscardDraft">放弃暂存修改</button>
+        <button class="ghost hidden" id="btnCancelEdit">取消微调任务</button>
+        <button class="ghost hidden" id="btnResumeEdit">重试上次微调</button>
         <button class="ghost" id="btnReset">清空偏移</button>
       </div>
       <div class="hint" id="rerenderMsg"></div>
-      <p class="hint">起点、终点可独立输入秒数；修改后句内字词按原有相对位置等比伸缩。若同时填整行偏移，会在新起止时间上叠加偏移。播放器与定位依据仍是已生成版本，提交后更新。</p>
-      <details><summary>人工锚点 · 重新对齐后续</summary>
-        <p class="hint">先用偏移调整并试听确认一句歌词，再选为锚点。将应用该句及之前的待提交偏移，锁定它们，从锚点句末重新分析其余音频。后续待提交偏移会由新对齐替代；生成独立版本，可回退。此操作需要模型推理和视频编码。</p>
-        <label>已确认的锚点句 <select id="anchorRow"></select></label>
-        <button class="ghost" id="btnAnchor">锁定此句，重新对齐后续</button>
-      </details>
-      <details><summary>插入新的歌词</summary>
-        <p class="hint">自动定位会锁定插入点前一句，重新对齐新增歌词及后续内容；手动定位直接使用填写的起止秒数，并在区间内均分字词。两种方式都会生成可回退的新版本。</p>
-        <label>插在此句之后 <select id="insertAfter"></select></label>
-        <label class="fl">新增歌词</label><input type="text" id="insertText" placeholder="输入一整句歌词">
-        <label class="fl">定位方式 <select id="insertMode"><option value="auto">自动重新对齐新增句和后续歌词</option><option value="manual">手动指定时间</option></select></label>
-        <div id="insertManual" class="row hidden"><label>起点（秒）<input type="number" id="insertStart" min="0" step="0.001"></label><label>终点（秒）<input type="number" id="insertEnd" min="0" step="0.001"></label></div>
-        <button class="ghost" id="btnInsert" style="margin-top:8px">插入并生成新版本</button>
-        <div class="hint" id="insertMsg"></div>
-      </details>
+      <p class="hint">起止时间使用分:秒格式（例如 5:09.880），也可输入总秒数；修改起止时间时，句内字词按原相对位置等比伸缩。歌词可逐行编辑，替换时保留该句时长并按原字词节奏分配高亮时间。点击行内“＋”可在该句后暂存新歌词，不会立即生成视频；插入和调整完成后点击上方按钮统一生成。</p>
+      <div class="hint" id="insertMsg"></div>
+      </div>
     </div>
   </div>
 </div>
@@ -543,13 +576,75 @@ details[open] summary:before{content:"▾ "}
 const $ = (s) => document.querySelector(s);
 let JOB = null, ALIGN = null, ES = null, MEDIA_QUEUE = [], MEDIA_ITEMS = [], MEDIA_ACTIVE_INDEX = -1;
 let MEDIA_SWITCHING = false, BATCH_CANCEL_REQUESTED = false;
-let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null;
-let HISTORY = [], EDITABLE = true, EDITING = false;
+let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null, ANCHOR_ROWS = new Set(), EDIT_DRAFT_ID = null;
+let HISTORY = [], EDITABLE = true, EDITING = false, ANCHOR_API_SUPPORTED = false;
+let GENERATION_BUSY = false, EDIT_OPERATION = null, ASYNC_EDIT_SUPPORTED = false, DRAFT_RESTORE_BLOCKED = false;
+const TASK_STORE = 'lets-karaoke:pending-tasks';
+let SAVED_TASKS = readLocal(TASK_STORE, {});
+const BATCH_JOBS = new Set();
 const escapeText = value => String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+function readLocal(key, fallback){try{return JSON.parse(localStorage.getItem(key))||fallback;}catch{return fallback;}}
+function writeLocal(key, value){try{localStorage.setItem(key,JSON.stringify(value));}catch{logLine('浏览器无法保存恢复记录；后台任务仍会继续，请通过历史记录查看。',true);}}
+function removeLocal(key){try{localStorage.removeItem(key);}catch{}}
+function rememberTask(job, value){SAVED_TASKS[job]={...value,job};writeLocal(TASK_STORE,SAVED_TASKS);}
+function forgetTask(job){delete SAVED_TASKS[job];writeLocal(TASK_STORE,SAVED_TASKS);BATCH_JOBS.delete(job);}
+function jobIdentity(job){
+  return TaskClient.identity(job,HISTORY);
+}
+const sameJob=(a,b)=>jobIdentity(a)===jobIdentity(b);
+const draftKey=(job=JOB,version=TUNE_VERSION)=>`lets-karaoke:draft:${jobIdentity(job)}:${Number(version)||0}`;
+const editFailureKey=job=>`lets-karaoke:failed-edit:${jobIdentity(job)}`;
+function rememberEditFailure(job,context){writeLocal(editFailureKey(context.target_job),{job,context,target_job:context.target_job,kind:'edit'});}
+function persistDraft(){
+  if(!JOB||!ALIGN||DRAFT_RESTORE_BLOCKED)return;
+  const fields=[];
+  for(const input of $('#tuneBody').querySelectorAll('input')){
+    const attr=['data-line-text','data-bound-start','data-bound-end','data-line','data-token'].find(name=>input.hasAttribute(name));
+    if(attr&&input.value!==input.defaultValue)fields.push({attr,row:input.getAttribute(attr),value:input.value});
+  }
+  const editor=$('#tuneBody [data-insert-editor]');
+  const insertion=editor?{after:Number(editor.querySelector('[data-insert-save]').dataset.insertSave),text:editor.querySelector('[data-insert-text]').value,mode:editor.querySelector('[data-insert-mode]').value,start:editor.querySelector('[data-insert-start]').value,end:editor.querySelector('[data-insert-end]').value}:null;
+  writeLocal(draftKey(),{draft_id:EDIT_DRAFT_ID,anchors:[...ANCHOR_ROWS],fields,insertion,options:styleOptions()});
+}
+async function restoreDraft(version){
+  DRAFT_RESTORE_BLOCKED=false;
+  EDIT_DRAFT_ID=null;
+  const key=draftKey(JOB,version),identity=jobIdentity(JOB),raw=identity.startsWith('webui/')?identity.slice(6):JOB;
+  const oldKey=`lets-karaoke:draft:${raw}:${Number(version)||0}`;
+  const saved=readLocal(key,null)||readLocal(oldKey,null)||readLocal(`lets-karaoke:draft:${JOB}:${Number(version)||0}`,null);
+  if(!saved)return;
+  writeLocal(key,saved);if(oldKey!==key)removeLocal(oldKey);
+  if(saved.draft_id)try{
+    const draft=await TaskClient.json('/api/draft?draft_id='+encodeURIComponent(saved.draft_id)+'&job='+encodeURIComponent(JOB)+'&base_version='+(Number(version)||0));
+    EDIT_DRAFT_ID=draft.draft_id;ANCHOR_ROWS=new Set(saved.anchors||[]);
+    await loadAlign(version,draft.lines);
+    $('#insertMsg').textContent='已恢复暂存修改；播放器仍显示已生成版本。';
+  }catch(error){
+    if(error.status===404){removeLocal(draftKey(JOB,version));logLine('暂存修改已不存在，已打开保存的版本。',true);return;}
+    else{DRAFT_RESTORE_BLOCKED=true;EDITABLE=false;setEditBusy(false);showErr('暂存修改暂时无法加载：'+error.message+'；恢复记录已保留，重新打开此历史记录可重试。');}
+  }
+  if(saved.draft_id&&!EDIT_DRAFT_ID)return;
+  ANCHOR_ROWS=new Set(saved.anchors||[]);
+  if(saved.options)applyStyleOptions(saved.options);
+  for(const field of saved.fields||[]){
+    if(!['data-line-text','data-bound-start','data-bound-end','data-line','data-token'].includes(field.attr))continue;
+    const input=$('#tuneBody').querySelector(`[${field.attr}="${CSS.escape(String(field.row))}"]`);if(input)input.value=field.value;
+  }
+  if(saved.insertion){
+    openInlineInsert(saved.insertion.after);
+    const editor=$('#tuneBody [data-insert-editor]');
+    if(editor){for(const key of ['text','mode','start','end'])editor.querySelector(`[data-insert-${key}]`).value=saved.insertion[key]||'';editor.querySelector('[data-insert-manual]').classList.toggle('hidden',saved.insertion.mode!=='manual');}
+  }
+  syncAllTokenEditStates();updateAnchorControls();WAVEFORM?.refresh();
+  if(saved.fields?.length||saved.insertion)$('#rerenderMsg').textContent='已恢复尚未提交的修改；播放器显示已生成版本，确认后可提交。';
+}
 
 // ---------------------------------------------------------------- 初始化
 async function boot(){
-  const meta = await (await fetch('/api/meta')).json();
+  const meta = await TaskClient.json('/api/meta');
+  ANCHOR_API_SUPPORTED=meta.features?.multi_anchor===true;
+  ASYNC_EDIT_SUPPORTED=meta.features?.async_edit===true;
   window.RULE_META = meta;
   renderRules();
   const fs = $('#font');
@@ -561,13 +656,46 @@ async function boot(){
   });
   renderStylePreview();
   try {
-    const r = await fetch('/api/jobs');
-    const js = await r.json();
+    const js = await TaskClient.json('/api/jobs');
     $('#devPill').textContent = js.length ? `历史任务 ${js.length}` : '本地服务已就绪';
-  } catch(e){ $('#devPill').textContent = '本地服务已就绪'; }
-  await refreshHistory();
+    await refreshHistory();
+    if(!await recoverTasks(js))await restoreWorkspace();
+  } catch(e){ $('#devPill').textContent = '任务列表暂时无法连接'; showErr(e.message); }
 }
-boot();
+boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('初始化失败：'+e.message);});
+
+async function recoverTasks(serverJobs){
+  const jobs=TaskClient.recover(serverJobs,Object.keys(SAVED_TASKS));
+  if(!jobs.length)return false;
+  GENERATION_BUSY=true;$('#btnRun').disabled=true;BATCH_CANCEL_REQUESTED=false;
+  jobs.filter(j=>j.kind!=='edit'&&SAVED_TASKS[j.job]?.kind!=='edit').forEach(j=>BATCH_JOBS.add(j.job));
+  $('#btnCancel').disabled=!BATCH_JOBS.size;
+  logLine(`正在恢复 ${jobs.length} 个已提交任务；后台队列会继续处理。`);
+  try{
+    for(let i=0;i<jobs.length;i++){
+      const entry={...SAVED_TASKS[jobs[i].job],...jobs[i]},id=entry.job;
+      rememberTask(id,entry);
+      if(entry.kind==='edit')await recoverEdit(entry);
+      else{
+        JOB=id;EDITABLE=true;
+        await watch(id,i/jobs.length,1/jobs.length);
+      }
+    }
+  }finally{
+    GENERATION_BUSY=false;setEditBusy(EDITING);$('#btnCancel').disabled=!BATCH_JOBS.size;
+    await refreshHistory();
+  }
+  return true;
+}
+async function restoreWorkspace(){
+  const saved=readLocal('lets-karaoke:last-workspace',null);if(!saved)return;
+  const record=HISTORY.find(row=>row.path===saved.path||sameJob(row.job,saved.job));
+  if(!record?.result||historyLocked(record))return;
+  const selected=record.versions.find(version=>version.version===Number(saved.version)&&version.video);
+  JOB=record.job;EDITABLE=record.editable;
+  await finish(selected?{...record.result,video:selected.video,version:selected.version}:record.result);
+  logLine('已恢复上次打开的记录和编辑版本。');
+}
 
 // ---------------------------------------------------------------- 分段控件
 function seg(id, cb){
@@ -580,19 +708,32 @@ function seg(id, cb){
 }
 let VOCAL = 'remove', LANG = 'auto', SRC = 'whisper';
 seg('#segVocal', v => VOCAL = v);
-seg('#segLang',  v => { LANG = v; refreshSrcUI(); });
+seg('#segLang',  v => {
+  LANG = v;
+  if(!MEDIA_SWITCHING && MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
+    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lang = v;
+    renderMediaQueue();
+  }
+  refreshSrcUI();
+});
 seg('#segSrc',   v => { SRC = v; refreshSrcUI(); });
 
 // 歌词来源三选一（分段选择器天然互斥，不会出现「勾了一个另一个的选项还亮着」）
 const SRC_HINT = {
   whisper: '① 有歌词 + whisper 对齐（推荐）：把「你给的词」对到人声上；large-v3 本地跑，' +
-           '含词概率诊断 + 人声能量纠偏 + 低置信行重定位。',
-  sofa:    '② 有歌词 + SOFA 对齐（实验性）：歌声专用音素级，先 whisper 定位每行、' +
-           '再用 SOFA 细化到 mora（假名）粒度；使用系统 Python 的 SOFA 依赖，英文行自动回退 whisper。',
+           '提供词概率诊断、人声能量辅助修正和疑难句提示；模型分数不能代替试听验收。',
+  sofa:    '② 日语歌词 + SOFA（实验性）：先用 Whisper 定位每行，再按日语音素细化；' +
+           '无法映射或细化失败时沿用行窗口并插值，结果仍需试听确认。此路线仅支持日语。',
   asr:     '③ 没歌词 · 自动转写：本地 Qwen3-ASR-1.7B 转写歌词草稿（务必手动选对语言），' +
            '随后自动用 Whisper 对齐并出片；识别出的歌词仍可能有错字。',
 };
 function refreshSrcUI(){
+  if(SRC==='sofa'){
+    LANG='ja';
+    $('#segLang').querySelectorAll('button').forEach(button=>button.classList.toggle('on',button.dataset.v==='ja'));
+    if(MEDIA_ITEMS[MEDIA_ACTIVE_INDEX])MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lang='ja';
+  }
+  $('#segLang').querySelectorAll('button').forEach(button=>button.disabled=SRC==='sofa'&&button.dataset.v!=='ja');
   $('#srcHint').textContent = SRC_HINT[SRC] || '';
   const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0];
   $('#whisperOpts').classList.toggle('hidden', SRC === 'sofa');
@@ -611,6 +752,39 @@ const STYLE_DEFAULTS = {
   line_count: 2, next_line: true, position_x: 50, position_y: 89,
   lead_ms: 320, tail_ms: 320, group_same_unit: false,
 };
+let ACTIVE_LINE_POSITIONS = null;
+const clampPercent = value => Math.max(0, Math.min(100, Number(value) || 0));
+const roundPercent = value => Math.round(clampPercent(value) * 10) / 10;
+const showPercent = value => `${Number(value)%1?Number(value).toFixed(1):Number(value)}%`;
+function normalizeLinePositions(options={}){
+  const baseX=clampPercent(options.position_x ?? 50);
+  const baseY=clampPercent(options.position_y ?? (options.margin_v!=null ? 100-Number(options.margin_v)/1080*100 : 89));
+  const fontSize=Number(options.font_size)||66;
+  const step=Math.max(fontSize*1.1,fontSize*0.62*1.4)/1080*100;
+  const saved=Array.isArray(options.line_positions)?options.line_positions:[];
+  return [0,1,2].map(i=>{
+    const item=saved[i];
+    const x=item&&typeof item==='object'?(Array.isArray(item)?item[0]:item.x):undefined;
+    const y=item&&typeof item==='object'?(Array.isArray(item)?item[1]:item.y):undefined;
+    return {x:roundPercent(x??baseX),y:roundPercent(y??(baseY+step*i))};
+  });
+}
+function positionLineIndex(){return Math.max(0,Math.min(2,Number($('#positionRow')?.value)||0));}
+function syncPositionControls(){
+  if(!ACTIVE_LINE_POSITIONS)ACTIVE_LINE_POSITIONS=normalizeLinePositions(STYLE_DEFAULTS);
+  const pos=ACTIVE_LINE_POSITIONS[positionLineIndex()];
+  $('#positionX').value=String(pos.x);$('#positionY').value=String(pos.y);
+  $('#positionXVal').textContent=showPercent(pos.x);$('#positionYVal').textContent=showPercent(pos.y);
+}
+function updateActiveLinePosition(){
+  if(!ACTIVE_LINE_POSITIONS)ACTIVE_LINE_POSITIONS=normalizeLinePositions(STYLE_DEFAULTS);
+  ACTIVE_LINE_POSITIONS[positionLineIndex()]={x:roundPercent($('#positionX').value),y:roundPercent($('#positionY').value)};
+}
+function updatePositionLineChoices(){
+  const select=$('#positionRow'),count=Math.max(1,Math.min(3,Number($('#lineCount').value)||2));
+  [...select.options].forEach((option,i)=>option.disabled=i>=count);
+  if(Number(select.value)>=count)select.value='0';
+}
 function defaultStyleOptions(){
   return {...STYLE_DEFAULTS, font: window.RULE_META?.defaults?.font || $('#font')?.value || ''};
 }
@@ -622,13 +796,13 @@ function applyStyleOptions(options){
   set('fontSize', opts.font_size);
   set('sung', opts.sung_color); set('unsung', opts.unsung_color);
   set('lineCount', opts.line_count ?? (opts.next_line ? 2 : 1));
-  set('positionX', opts.position_x); set('positionY', opts.position_y);
+  ACTIVE_LINE_POSITIONS=normalizeLinePositions(opts);
+  $('#positionRow').value='0';updatePositionLineChoices();syncPositionControls();
   set('leadMs', opts.lead_ms); set('tailMs', opts.tail_ms);
   if($('#groupUnit')) $('#groupUnit').checked = Boolean(opts.group_same_unit);
   $('#fsVal').textContent = $('#fontSize').value;
   $('#leadVal').textContent = $('#leadMs').value;
   $('#tailVal').textContent = $('#tailMs').value;
-  $('#positionXVal').textContent = $('#positionX').value + '%';
   updatePreviewPositionLimit();
   renderStylePreview();
 }
@@ -637,6 +811,7 @@ function captureActiveMediaItem(){
   const item = MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
   item.lyrics = $('#lyrics').value;
   item.lyricsFileName = item.lyricsFile?.name || item.lyricsFileName || '';
+  item.lang = LANG;
   item.style = JSON.parse(JSON.stringify(styleOptions()));
 }
 function renderMediaQueue(){
@@ -649,7 +824,8 @@ function renderMediaQueue(){
     b.style.cssText='text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis';
     b.style.borderColor=i===MEDIA_ACTIVE_INDEX?'var(--blue)':'var(--line)';
     const hasLyrics=Boolean((item.lyrics||'').trim()||item.lyricsFile);
-    b.textContent=`${i+1}. ${item.file.name} · ${hasLyrics?'歌词已设置':'待填写歌词'}`;
+    const langLabel={auto:'自动',zh:'中文',en:'English',ja:'日本語'}[item.lang]||'自动';
+    b.textContent=`${i+1}. ${item.file.name} · ${hasLyrics?'歌词已设置':'待填写歌词'} · ${langLabel}`;
     b.title=item.file.name;b.onclick=()=>activateMediaItem(i);list.append(b);
   });
   const active=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
@@ -663,6 +839,8 @@ function activateMediaItem(index){
   $('#lyrics').value=item.lyrics||'';
   $('#lyricsFile').value='';
   $('#fnLyrics').textContent=item.lyricsFileName?`已载入：${item.lyricsFileName}`:'';
+  LANG=item.lang||'auto';
+  [...$('#segLang').children].forEach(button => button.classList.toggle('on',button.dataset.v===LANG));
   applyStyleOptions(item.style||defaultStyleOptions());
   MEDIA_SWITCHING=false;
   if(item.file)setStylePreviewFile(item.file);
@@ -703,9 +881,11 @@ function setMediaSelection(first, files=[first]){
   const seedLyrics = $('#lyrics').value;
   const seedLyricsFile = $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile || null;
   const seedStyle = JSON.parse(JSON.stringify(styleOptions()));
+  const seedLang = selected.length > 1 ? 'auto' : LANG;
   MEDIA_ITEMS = selected.map(file => ({
     file, lyrics:seedLyrics, lyricsFile:seedLyricsFile,
-    lyricsFileName:seedLyricsFile?.name || '', style:JSON.parse(JSON.stringify(seedStyle)),
+    lyricsFileName:seedLyricsFile?.name || '', lang:seedLang,
+    style:JSON.parse(JSON.stringify(seedStyle)),
   }));
   MEDIA_QUEUE = MEDIA_ITEMS.map(item => item.file);
   MEDIA_ACTIVE_INDEX = -1;
@@ -727,6 +907,38 @@ $('#mediaFolder').addEventListener('change', e => {
   const files = [...e.target.files];
   if(files.length) setMediaSelection(files[0], files);
 });
+async function importConcertMedia(data){
+  const label=$('#fnMedia');
+  if($('#btnRun').disabled){label.textContent='当前有任务正在运行，请等待完成后再导入。';return;}
+  try{
+    const url=new URL(data.url||'',location.origin);
+    if(url.origin!==location.origin||!/^\/concert-files\/[a-zA-Z0-9_-]+\/export-[a-f0-9]+\/[^/]+$/.test(url.pathname))
+      throw new Error('切割视频地址无效');
+    const name=String(data.name||decodeURIComponent(url.pathname.split('/').pop()||'concert-clip.mp4'));
+    label.textContent=`正在导入 ${name}，大文件需要等待下载…`;
+    const response=await fetch(url.pathname,{credentials:'same-origin'});
+    if(!response.ok)throw new Error(`读取切割视频失败（${response.status}）`);
+    const blob=await response.blob();
+    const mime=blob.type||(/\.mkv$/i.test(name)?'video/x-matroska':'video/mp4');
+    const file=new File([blob],name,{type:mime,lastModified:Date.now()});
+    $('#lyrics').value='';$('#lyricsFile').value='';$('#fnLyrics').textContent='';
+    MEDIA_ITEMS=[];MEDIA_QUEUE=[];MEDIA_ACTIVE_INDEX=-1;
+    refreshSrcUI();
+    setMediaSelection(file,[file]);
+    $('#fnMedia').textContent=`已导入：${name}（${(file.size/1048576).toFixed(1)} MB）`;
+    $('#dropMedia').scrollIntoView({behavior:'smooth',block:'center'});
+  }catch(error){
+    label.textContent=`导入失败：${error.message}`;
+  }
+}
+window.addEventListener('message',event=>{
+  if(event.origin!==location.origin||event.source!==window.parent)return;
+  if(event.data?.type==='lets-karaoke:ping'){
+    window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);return;
+  }
+  if(event.data?.type==='lets-karaoke:import-concert-media')importConcertMedia(event.data);
+});
+window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);
 dropWire('#dropTrack', '#track', '#fnTrack');
 
 $('#lyricsFile').addEventListener('change', async e => {
@@ -758,8 +970,8 @@ bindVal('#quality', '#qVal');
 bindVal('#fontSize', '#fsVal');
 bindVal('#leadMs', '#leadVal');
 bindVal('#tailMs', '#tailVal');
-bindVal('#positionX', '#positionXVal', v => v + '%');
-bindVal('#positionY', '#positionYVal', v => v + '%');
+bindVal('#positionX', '#positionXVal', showPercent);
+bindVal('#positionY', '#positionYVal', showPercent);
 $('#previewFrame').addEventListener('input', e => {
   const video=$('#stylePreviewVideo');
   if(video.src && Number.isFinite(video.duration)){
@@ -779,11 +991,19 @@ $('#stylePreviewVideo').addEventListener('error', () => {
   $('#previewFrame').disabled=true;
 });
 $('#fontSize').addEventListener('input', updatePreviewPositionLimit);
-$('#lineCount').addEventListener('change', updatePreviewPositionLimit);
+$('#lineCount').addEventListener('input',()=>{updatePositionLineChoices();syncPositionControls();updatePreviewPositionLimit();});
+$('#lineCount').addEventListener('change',()=>{updatePositionLineChoices();syncPositionControls();updatePreviewPositionLimit();});
+$('#positionRow').addEventListener('change',()=>{
+  syncPositionControls();updatePreviewPositionLimit();captureActiveMediaItem();renderStylePreview();renderMediaQueue();
+});
 ['font','fontSize','sung','unsung','positionX','positionY','lineCount','leadMs','tailMs','groupUnit'].forEach(id => {
   const el=$('#'+id);if(el){
-    el.addEventListener('input',()=>{captureActiveMediaItem();renderStylePreview();renderMediaQueue();});
-    el.addEventListener('change',()=>{captureActiveMediaItem();renderStylePreview();renderMediaQueue();});
+    const changed=()=>{
+      if(id==='positionX'||id==='positionY')updateActiveLinePosition();
+      captureActiveMediaItem();renderStylePreview();renderMediaQueue();
+    };
+    el.addEventListener('input',changed);
+    el.addEventListener('change',changed);
   }
 });
 $('#lyricsFile').addEventListener('change', renderStylePreview);
@@ -816,13 +1036,13 @@ function fitPreviewToVideo(){
 }
 function updatePreviewPositionLimit(){
   const slider=$('#positionY');if(!slider)return;
-  const count=Number($('#lineCount').value)||2;
-  const size=Number($('#fontSize').value)||66,step=size*1.1/1080*100;
-  const min=Math.ceil(size*1.15/1080*100),max=Math.max(min+1,Math.floor(99-(count-1)*step));
+  const size=Number($('#fontSize').value)||66;
+  const min=Math.max(4,Math.ceil(size*1.15/1080*10)/10),max=96;
   slider.min=String(min);slider.max=String(max);
   if(Number(slider.value)>max)slider.value=String(max);
   if(Number(slider.value)<min)slider.value=String(min);
-  $('#positionYVal').textContent=slider.value+'%';
+  $('#positionYVal').textContent=showPercent(slider.value);
+  updateActiveLinePosition();
   renderStylePreview();
 }
 function renderStylePreview(){
@@ -830,15 +1050,18 @@ function renderStylePreview(){
   const count=Number($('#lineCount')?.value)||2,fs=Number($('#fontSize')?.value)||66;
   const supplied=($('#lyrics')?.value||'').split(/\r?\n/).map(line=>line.replace(/^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+/,'').trim()).filter(Boolean);
   const lines=supplied.length?supplied.slice(0,count):['当前演唱歌词','下一句预览','后续歌词示例'].slice(0,count);
-  const x=Number($('#positionX')?.value)||50,y=Number($('#positionY')?.value)||89,step=fs*1.1/1080*100;
+  const positions=ACTIVE_LINE_POSITIONS||normalizeLinePositions(STYLE_DEFAULTS);
+  const selected=positionLineIndex();
+  const x=positions[0]?.x??50,y=positions[0]?.y??89;
   preview.style.setProperty('--caption-x',x+'%');preview.style.setProperty('--caption-y',y+'%');
   preview.style.setProperty('--caption-sung',$('#sung')?.value||'#ffd24a');preview.style.setProperty('--caption-unsung',$('#unsung')?.value||'#ffffff');
   preview.style.setProperty('--caption-outline',Math.max(0,Number($('#outline')?.value||3)*preview.clientHeight/1080)+'px');
   captions.replaceChildren();
-  lines.forEach((line,i)=>{const row=document.createElement('div');row.className='style-preview-caption '+(i?'future':'current');row.textContent=line;
-    row.style.left=x+'%';row.style.top=Math.min(98,y+step*i)+'%';row.style.fontFamily=$('#font')?.value||'sans-serif';row.style.fontSize=Math.max(10,fs*preview.clientHeight/1080)+'px';captions.append(row);});
+  lines.forEach((line,i)=>{const row=document.createElement('div');row.className='style-preview-caption '+(i?'future':'current')+(i===selected?' position-selected':'');row.textContent=line;
+    row.style.left=(positions[i]?.x??x)+'%';row.style.top=(positions[i]?.y??y)+'%';row.style.fontFamily=$('#font')?.value||'sans-serif';row.style.fontSize=Math.max(10,fs*preview.clientHeight/1080)+'px';row.setAttribute('aria-label',`第 ${i+1} 行字幕位置预览`);captions.append(row);});
 }
 new ResizeObserver(()=>{fitPreviewToVideo();renderStylePreview()}).observe($('#stylePreview').parentElement);
+updatePositionLineChoices();syncPositionControls();
 renderStylePreview();
 updatePreviewPositionLimit();
 
@@ -897,11 +1120,13 @@ async function startMediaJob(media, config){
   return j.job;
 }
 $('#btnRun').addEventListener('click', async () => {
+  if(GENERATION_BUSY||EDITING)return;
   captureActiveMediaItem();
   const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
   const queue = items.map(item => item.file);
   const useAsr = (SRC === 'asr');
   if(!queue.length){ alert('请先选择视频或音频文件'); return; }
+  if(SRC==='sofa'&&items.some(item=>item.lang!=='ja')){showErr('SOFA 当前仅支持日语细化。请逐个选择文件并确认日语歌词，或改用 Whisper 对齐。');return;}
   if(!useAsr){
     const missing = items.filter(item => !(item.lyrics||'').trim() && !item.lyricsFile);
     if(missing.length){
@@ -924,60 +1149,79 @@ $('#btnRun').addEventListener('click', async () => {
   } catch(e) { showErr(e.message); return; }
 
   $('#errBox').classList.add('hidden');
+  persistDraft();EDIT_DRAFT_ID=null;
   $('#resultCard').classList.add('hidden');
   $('#tuneCard').classList.add('hidden');
   $('#log').textContent = '';
   $('#btnRun').disabled = true;
   $('#btnCancel').disabled = false;
+  GENERATION_BUSY = true;
   BATCH_CANCEL_REQUESTED = false;
-  let completed = 0, failed = 0, cancelled = false;
+  let completed = 0, failed = 0, needsFix = 0, needsReview = 0, cancelled = false;
+  const submitted=[];
+  try{
+  // Submit every file to the durable backend queue before waiting for rendering.
   for(let i=0;i<queue.length;i++){
     if(BATCH_CANCEL_REQUESTED){cancelled=true;break;}
     const media = queue[i];
     const item = items[i];
-    JOB = null;
-    if(i > 0) $('#resultCard').classList.add('hidden');
-    $('#btnCancel').disabled = true;
-    setProgress(i/queue.length, `准备第 ${i+1}/${queue.length} 个：${media.name}`);
+    setProgress(0, `上传第 ${i+1}/${queue.length} 个到后台队列：${media.name}`);
     try {
       const itemConfig = {...config,
         lyrics:(item.lyrics||'').trim(), lyricsFile:item.lyricsFile||null,
+        lang:item.lang||'auto',
         options:JSON.stringify(item.style||styleOptions()),
       };
       const job = await startMediaJob(media, itemConfig);
       JOB = job;
-      $('#btnCancel').disabled = false;
-      logLine(`第 ${i+1}/${queue.length} 个任务 ${job} 已创建：${media.name}`);
-      const batchStart = i / queue.length;
-      const batchSpan = 1 / queue.length;
-      const outcome = await watch(job, batchStart, batchSpan);
+      submitted.push({job,name:media.name});BATCH_JOBS.add(job);
+      rememberTask(job,{kind:'generate',name:media.name,created:Date.now()/1000});
+      logLine(`第 ${i+1}/${queue.length} 个任务 ${job} 已提交：${media.name}`);
+      if(BATCH_CANCEL_REQUESTED){
+        cancelled=true;
+        const failures=await TaskClient.cancelJobs([job]);
+        failures.forEach(f=>showErr('取消失败：'+f.error));
+        break;
+      }
+    } catch(e){failed++;showErr(`${media.name}：${e.message}`);}
+  }
+  for(let i=0;i<submitted.length;i++){
+    const item=submitted[i];JOB=item.job;EDITABLE=true;
+    try{
+      logLine(`查看第 ${i+1}/${submitted.length} 个已提交任务：${item.name}`);
+      const outcome = await watch(item.job,i/Math.max(1,submitted.length),1/Math.max(1,submitted.length));
       if(outcome.state === 'done'){
         completed++;
+        if(outcome.result?.acceptance?.status === 'needs_fix') needsFix++;
+        else if(outcome.result?.acceptance?.status === 'needs_review') needsReview++;
         await refreshHistory();
       } else if(outcome.state === 'cancelled'){
         cancelled=true;
-        break;
       } else {
         failed++;
       }
     } catch(e){
       failed++;
-      showErr(`${media.name}：${e.message}`);
+      showErr(`${item.name}：${e.message}`);
     }
   }
-  $('#btnRun').disabled = false;
-  $('#btnCancel').disabled = true;
+  }finally{
+    GENERATION_BUSY=false;setEditBusy(EDITING);$('#btnCancel').disabled=!BATCH_JOBS.size;
+    await refreshHistory();
+  }
   if(cancelled){
     setProgress(completed/queue.length, `已取消，完成 ${completed}/${queue.length} 个`);
-    logLine(`批量任务已取消：完成 ${completed} 个，失败 ${failed} 个，剩余未处理 ${queue.length-completed-failed} 个。`);
+    logLine(`批量任务已取消：导出 ${completed} 个（其中需处理 ${needsFix} 个、建议复核 ${needsReview} 个），失败 ${failed} 个，剩余未处理 ${queue.length-completed-failed} 个。`);
   } else {
-    setProgress(1, `批量完成：成功 ${completed} 个，失败 ${failed} 个`);
-    logLine(`批量任务完成：成功 ${completed} 个，失败 ${failed} 个。`);
+    setProgress(1, `批量完成：导出 ${completed} 个，需处理 ${needsFix} 个，建议复核 ${needsReview} 个`);
+    logLine(`批量任务完成：导出 ${completed} 个（其中需处理 ${needsFix} 个、建议复核 ${needsReview} 个），失败 ${failed} 个。`);
   }
   BATCH_CANCEL_REQUESTED = false;
 });
 
 function styleOptions(){
+  updateActiveLinePosition();
+  const linePositions=ACTIVE_LINE_POSITIONS||normalizeLinePositions(STYLE_DEFAULTS);
   return {
     font: $('#font').value,
     font_size: parseInt($('#fontSize').value),
@@ -985,8 +1229,9 @@ function styleOptions(){
     unsung_color: $('#unsung').value,
     line_count: Number($('#lineCount').value),
     next_line: Number($('#lineCount').value)>1,
-    position_x: Number($('#positionX').value),
-    position_y: Number($('#positionY').value),
+    position_x: linePositions[0].x,
+    position_y: linePositions[0].y,
+    line_positions: linePositions.map(pos=>({x:pos.x,y:pos.y})),
     lead_ms: parseInt($('#leadMs').value),
     tail_ms: parseInt($('#tailMs').value),
     group_same_unit: $('#groupUnit').checked,
@@ -1032,35 +1277,29 @@ function collectRules(){
   return r;
 }
 
-function watch(job, progressStart=0, progressSpan=1){
+async function watch(job, progressStart=0, progressSpan=1, edit=false){
   if(ES) ES.close();
-  const source = new EventSource('/api/events?job=' + encodeURIComponent(job));
-  ES = source;
-  return new Promise(resolve => {
-    let settled = false;
-    const close = () => { source.close(); if(ES === source) ES = null; };
-    const settle = outcome => { if(settled)return; settled=true; close(); resolve(outcome); };
-    source.onmessage = ev => {
-      const d = JSON.parse(ev.data);
-      const progress = progressStart + Math.max(0, Math.min(1, Number(d.progress) || 0)) * progressSpan;
-      setProgress(progress, d.lines.length ? stripStamp(d.lines[d.lines.length-1]) : null);
-      d.lines.forEach(l => logLine(l, l.includes('失败') || l.includes('!!')));
-      if(d.asr_lrc) showAsrDraft(d.asr_lrc, null);
-      if(d.state === 'done' && d.result){
-        Promise.resolve(finish(d.result, progressStart, progressSpan)).then(() => settle({state:'done',result:d.result}))
-          .catch(e => { showErr(e.message); settle({state:'error',error:e.message}); });
-      }
-      if(d.state === 'error'){
-        showErr(d.error || '未知错误');
-        settle({state:'error',error:d.error || '未知错误'});
-      }
-      if(d.state === 'cancelled'){
-        setProgress(progressStart, '已取消');
-        settle({state:'cancelled'});
-      }
-    };
-    source.onerror = () => { /* 服务器关闭流时静默，EventSource 会继续重连 */ };
+  let lastProgress=0;
+  const handle=TaskClient.monitor(job,{
+    onConnection:connected=>{if(!connected){$('#stageTxt').textContent='连接中断，正在重新确认任务状态…';if(edit)$('#rerenderMsg').textContent='连接中断，后台任务可能仍在处理，正在恢复状态…';}},
+    onUpdate:d=>{
+      lastProgress=Math.max(lastProgress,Math.max(0,Math.min(1,Number(d.progress)||0)));
+      const stage=d.lines.length?stripStamp(d.lines[d.lines.length-1]):d.state==='queued'?'已进入后台队列，等待处理…':null;
+      setProgress(progressStart+lastProgress*progressSpan,stage);
+      d.lines.forEach(l=>logLine(l,l.includes('失败')||l.includes('!!')));
+      if(edit)$('#rerenderMsg').textContent=stage||`微调处理中 ${Math.round(lastProgress*100)}%`;
+      if(d.asr_lrc)showAsrDraft(d.asr_lrc,null);
+    }
   });
+  ES=handle;
+  const outcome=await handle.promise;
+  if(ES===handle)ES=null;
+  if(outcome.state==='done'&&outcome.result&&!edit){
+    await finish(outcome.result,progressStart,progressSpan);
+  }else if(outcome.state==='error'||outcome.state==='interrupted')showErr(outcome.error||'任务已中断，可在历史记录重新运行。');
+  else if(outcome.state==='cancelled')setProgress(progressStart,'已取消');
+  if(!edit&&!outcome.unconfirmed)forgetTask(job);
+  return outcome;
 }
 const stripStamp = s => (s || '').replace(/^\d{2}:\d{2}:\d{2}\s+/, '');
 
@@ -1090,19 +1329,18 @@ function showAsrDraft(lrc, info){
 
 $('#btnCancel').addEventListener('click', async () => {
   BATCH_CANCEL_REQUESTED = true;
-  if(!JOB){ logLine('已请求取消，当前文件尚未提交。'); return; }
-  try {
-    const r = await fetch('/api/cancel', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ job: JOB }) });
-    if(!r.ok) throw new Error(`取消请求失败（${r.status}）`);
-    logLine('已请求取消当前文件，批量队列将在此处停止…');
-  } catch(e) {
-    BATCH_CANCEL_REQUESTED = false;
-    showErr('取消失败：' + e.message);
-  }
+  const ids=[...BATCH_JOBS];
+  if(!ids.length){logLine('已停止后续上传，当前上传完成后会立即请求取消。');return;}
+  const failures=await TaskClient.cancelJobs(ids);
+  if(failures.length)failures.forEach(f=>showErr(`任务 ${f.job} 取消失败：${f.error}；可再次点击取消重试。`));
+  else logLine(`已请求取消 ${ids.length} 个已提交任务，并停止后续上传。`);
 });
 
 // ---------------------------------------------------------------- 结果
 async function finish(res, progressStart=0, progressSpan=1){
+  DRAFT_RESTORE_BLOCKED=false;
+  EDIT_DRAFT_ID=null;
+  ALIGN=null;$('#tuneCard').classList.add('hidden');
   setProgress(progressStart + progressSpan, '完成');
 
   const base = '/files/' + JOB + '/';
@@ -1129,7 +1367,8 @@ async function finish(res, progressStart=0, progressSpan=1){
     dl.appendChild(a);
   });
   $('#resultCard').classList.remove('hidden');
-  TUNE_VERSION=0;TUNE_LOOP=null;
+  $('#reviewDetails').open=false;
+  TUNE_VERSION=0;TUNE_LOOP=null;ANCHOR_ROWS.clear();
   const initial=document.createElement('option');initial.value='0';initial.textContent='原始版本';initial.dataset.video=$('#player').src;
   $('#tuneVersion').replaceChildren(initial);
 
@@ -1152,6 +1391,10 @@ async function finish(res, progressStart=0, progressSpan=1){
   hb.className = 'badge ' + (h.ok ? 'ok' : 'bad');
 
   logLine(`完成：${res.video}`);
+  if(res.acceptance?.status === 'needs_fix')
+    logLine(`自动验收：${res.acceptance.label}。请先检查字幕时间轴，再使用这段视频。`, true);
+  else if(res.acceptance?.status === 'needs_review')
+    logLine(`自动验收：${res.acceptance.label}。建议试听并检查提示行。`);
   if(res.asr_files && res.asr_files.length){
     fetch(base + encodeURIComponent(res.asr_files[0]))
       .then(r => r.text())
@@ -1178,13 +1421,14 @@ async function finish(res, progressStart=0, progressSpan=1){
   }
   await loadVersions(res.version || 0);
   await loadAlign(res.version || '');
+  await restoreDraft(res.version || 0);
+  $('#btnResumeEdit').classList.toggle('hidden',!readLocal(editFailureKey(JOB),null));
 }
 
 async function refreshHistory(){
   $('#historyCount').textContent='扫描中…';
   try {
-    const d=await (await fetch('/api/history')).json();
-    if(d.error)throw new Error(d.error);
+    const d=await TaskClient.json('/api/history');
     HISTORY=d.records;$('#historyCount').textContent=`${HISTORY.length} 条`;
     renderHistory();
   }catch(e){$('#historyCount').textContent='扫描失败：'+e.message;}
@@ -1195,53 +1439,132 @@ function renderHistory(){
   for(const record of HISTORY.filter(r=>(r.title+' '+r.path).toLowerCase().includes(query))){
     const item=document.createElement('div');item.style.cssText='display:flex;gap:8px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)';
     const check=document.createElement('input');check.type='checkbox';check.className='history-check';check.dataset.job=record.job;check.style.cssText='width:auto;margin-top:4px';
+    check.disabled=historyLocked(record);
     const title=document.createElement('div');title.textContent=record.title;
-    const note=document.createElement('div');note.className='hint';note.style.overflowWrap='anywhere';note.textContent=`${record.path} · ${record.versions.length} 个版本 · ${new Date(record.created*1000).toLocaleString()}${record.error?' · '+record.error:''}`;
+    const stateLabel={queued:'排队中',running:'处理中',done:'已完成',error:'失败',cancelled:'已取消',interrupted:'已中断'}[record.state]||record.state||'已保存';
+    const note=document.createElement('div');note.className='hint';note.style.overflowWrap='anywhere';note.textContent=`${stateLabel}${record.active_job?' · 修改任务处理中':''} · ${record.path} · ${record.versions.length} 个版本 · ${new Date(record.created*1000).toLocaleString()}${record.error?' · '+record.error:''}`;
     const button=document.createElement('button');button.className='mini';button.textContent=record.result?(record.editable?'打开并继续编辑':'查看结果'):'未完成 / 无成片';
-    button.disabled=!record.result||EDITING||$('#btnRun').disabled;
+    button.disabled=!record.result||EDITING||GENERATION_BUSY||historyLocked(record);
     button.onclick=async()=>{
-      if(EDITING||$('#btnRun').disabled)return;
+      if(EDITING||GENERATION_BUSY||historyLocked(record))return;
+      persistDraft();
       try{if(ES){ES.close();ES=null;} JOB=record.job;EDITABLE=record.editable;await finish(record.result);$('#resultCard').scrollIntoView({behavior:'smooth'});}
       catch(e){showErr('打开历史失败：'+e.message);}
     };
     const body=document.createElement('div');body.style.flex='1';body.append(title,note,button);
+    if(record.resumable&&!historyLocked(record)){
+      const resume=document.createElement('button');resume.className='mini';resume.style.marginLeft='8px';resume.textContent='重新运行';resume.disabled=EDITING||GENERATION_BUSY;
+      resume.onclick=()=>resumeHistory(record);body.append(resume);
+    }
     item.append(check,body);list.append(item);
   }
 }
-function selectedHistory(){return [...document.querySelectorAll('.history-check:checked')].map(c=>c.dataset.job);}
+function historyLocked(record){return TaskClient.active(record.state)||Boolean(record.active_job)||(EDITING&&sameJob(record.job,JOB));}
+function selectedHistory(){return [...document.querySelectorAll('.history-check:checked:not(:disabled)')].map(c=>c.dataset.job);}
+async function resumeHistory(record){
+  if(EDITING||GENERATION_BUSY)return;
+  GENERATION_BUSY=true;$('#btnRun').disabled=true;BATCH_CANCEL_REQUESTED=false;renderHistory();
+  try{
+    const d=await TaskClient.json('/api/resume',{job:record.job});
+    JOB=d.job;EDITABLE=true;BATCH_JOBS.add(d.job);rememberTask(d.job,{kind:'generate',name:record.title,created:Date.now()/1000});
+    $('#btnCancel').disabled=false;await refreshHistory();await watch(d.job);
+  }catch(error){showErr('重新运行失败：'+error.message);}
+  finally{GENERATION_BUSY=false;setEditBusy(EDITING);$('#btnCancel').disabled=!BATCH_JOBS.size;await refreshHistory();}
+}
 async function deleteHistory(jobs,label){
+  jobs=jobs.filter(job=>!historyLocked(HISTORY.find(r=>r.job===job)||{}));
   if(!jobs.length){$('#historyActionMsg').textContent='请先勾选历史记录。';return;}
   if(!confirm(`确定永久删除${label}吗？视频、字幕、对齐数据和日志都会删除，无法恢复。`))return;
   try{const r=await fetch('/api/history/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({jobs})});const d=await r.json();if(d.error)throw new Error(d.error);if(jobs.includes(JOB)){JOB=null;$('#resultCard').classList.add('hidden');$('#tuneCard').classList.add('hidden');}$('#historyActionMsg').textContent=`已删除 ${d.removed.length} 条历史记录。`;await refreshHistory();}catch(e){$('#historyActionMsg').textContent='删除失败：'+e.message;}
 }
-$('#selectAllHistory').onclick=()=>{const checks=[...document.querySelectorAll('.history-check')];const all=checks.length&&checks.every(c=>c.checked);checks.forEach(c=>c.checked=!all);};
+$('#selectAllHistory').onclick=()=>{const checks=[...document.querySelectorAll('.history-check:not(:disabled)')];const all=checks.length&&checks.every(c=>c.checked);checks.forEach(c=>c.checked=!all);};
 $('#deleteSelectedHistory').onclick=()=>deleteHistory(selectedHistory(),'选中的历史记录');
-$('#clearHistory').onclick=()=>deleteHistory(HISTORY.map(r=>r.job),'全部历史记录');
+$('#clearHistory').onclick=()=>deleteHistory(HISTORY.filter(r=>!historyLocked(r)).map(r=>r.job),'全部可删除的历史记录（处理中任务会保留）');
 async function loadVersions(selected){
-  const d=await (await fetch('/api/versions?job='+encodeURIComponent(JOB))).json();
-  if(d.error)throw new Error(d.error);
+  const d=await TaskClient.json('/api/versions?job='+encodeURIComponent(JOB));
   EDITABLE=d.editable;
   const select=$('#tuneVersion');select.replaceChildren();
   for(const version of d.versions.filter(v=>v.video)){
     const option=document.createElement('option');option.value=version.version;option.textContent=version.version?'版本 v'+version.version:'原始版本';
-    if(version.anchor_row!=null)option.textContent+=` · 第 ${version.anchor_row+1} 句锚点`;
+    const rows=version.anchor_rows??(version.anchor_row==null?[]:[version.anchor_row]);
+    if(rows.length)option.textContent+=` · 锚点第 ${rows.map(row=>row+1).join('、')} 句`;
+    option.dataset.anchorRow=version.anchor_row==null?'':String(version.anchor_row);
+    option.dataset.anchorRows=JSON.stringify(rows);
     option.dataset.video='/files/'+JOB+'/'+encodeURIComponent(version.video);select.append(option);
   }
   select.value=String(selected);
-  $('#btnRerender').disabled=!EDITABLE;$('#btnAnchor').disabled=!EDITABLE;
+  $('#btnRerender').disabled=!EDITABLE||EDITING||GENERATION_BUSY;
 }
 $('#refreshHistory').onclick=refreshHistory;
 $('#historySearch').oninput=renderHistory;
 
 // ---------------------------------------------------------------- 微调
-async function loadAlign(version=''){
+function updateAnchorControls(){
+  const lines=ALIGN?.lines||[];
+  const busy=EDITING||GENERATION_BUSY;
+  ANCHOR_ROWS=new Set([...ANCHOR_ROWS].filter(index=>Number.isInteger(index)&&index>=0&&index<lines.length));
+  document.querySelectorAll('#tuneBody tr.anchor-candidate').forEach(row=>row.classList.remove('anchor-candidate'));
+  document.querySelectorAll('#tuneBody button[data-anchor-row]').forEach(button=>{
+    const index=Number(button.dataset.anchorRow),isAvailable=index<lines.length,isActive=ANCHOR_ROWS.has(index),isLast=index===lines.length-1;
+    button.disabled=!EDITABLE||busy||Boolean(EDIT_DRAFT_ID)||!isAvailable||!ANCHOR_API_SUPPORTED;
+    button.setAttribute('aria-pressed',String(isActive));
+    button.setAttribute('aria-label',isAvailable?(isActive?`取消第 ${index+1} 句锚点`:`将第 ${index+1} 句设为锚点`):'');
+    button.title=!ANCHOR_API_SUPPORTED?'本地后台尚未加载锚点更新，请重启后台并刷新页面':isActive?`第 ${index+1} 句已选为锚点；点击取消`:isLast?'将末句设为区间结束锚点；需同时选择更早的一句':'将此句设为锚点，从该句之后重新对齐至下一个锚点或歌曲结尾';
+    if(isActive)button.closest('tr')?.classList.add('anchor-candidate');
+  });
+  document.querySelectorAll('#tuneBody button[data-insert-after]').forEach(button=>button.disabled=!EDITABLE||busy);
+  const rerender=$('#btnRerender');
+  const selected=[...ANCHOR_ROWS].sort((a,b)=>a-b);
+  rerender.disabled=!EDITABLE||busy||(!EDIT_DRAFT_ID&&!ANCHOR_API_SUPPORTED&&selected.length>0);
+  rerender.textContent=EDIT_DRAFT_ID?'生成暂存修改':!selected.length?'应用并重新渲染':selected.length===1&&selected[0]<lines.length-1
+    ?`锁定第 ${selected[0]+1} 句并重新对齐后续`:`锁定 ${selected.length} 句锚点并分段重新对齐`;
+  $('#tuneVersion').disabled=!EDITABLE||Boolean(EDIT_DRAFT_ID)||busy;
+  $('#btnDiscardDraft').classList.toggle('hidden',!EDIT_DRAFT_ID);
+  $('#btnDiscardDraft').disabled=busy||!EDIT_DRAFT_ID;
+  $('#btnRetry').disabled=!EDITABLE||busy||Boolean(EDIT_DRAFT_ID);
+  if(!ANCHOR_API_SUPPORTED&&lines.length)$('#rerenderMsg').textContent='本地后台尚未加载锚点更新，请重启后台并刷新页面后再使用锚点。';
+}
+function setAnchorCandidate(index){
+  if(EDIT_DRAFT_ID)return;
+  if(!Number.isInteger(index)||index<0||index>=(ALIGN?.lines.length||0)-1)return;
+  ANCHOR_ROWS.add(index);updateAnchorControls();
+  persistDraft();
+}
+function toggleAnchorCandidate(index){
+  if(!Number.isInteger(index)||index<0||index>=(ALIGN?.lines.length||0))return;
+  if(ANCHOR_ROWS.has(index))ANCHOR_ROWS.delete(index);else ANCHOR_ROWS.add(index);
+  updateAnchorControls();
+  persistDraft();
+}
+function syncTokenEditState(row){
+  const line=ALIGN?.lines?.[row],tr=$(`#tuneBody [data-tune-row="${row}"]`);
+  if(!line||!tr)return;
+  const changed=tr.querySelector('[data-line-text]')?.value.trim()!==line.raw;
+  tr.querySelectorAll('input[data-token]').forEach(input=>{
+    if(changed)input.value='';
+    input.disabled=!EDITABLE||EDITING||GENERATION_BUSY||changed;
+  });
+  const summary=tr.querySelector('details summary');
+  if(summary)summary.textContent=changed?'字词偏移（修改歌词后重新计算）':'字词偏移';
+}
+function syncAllTokenEditStates(){
+  (ALIGN?.lines||[]).forEach((_,row)=>syncTokenEditState(row));
+}
+async function loadAlign(version='', draftLines=null){
   if(!JOB) return;
-  let aj;
-  try { aj = await (await fetch('/api/align?job=' + JOB + (version ? '&v=' + encodeURIComponent(version) : ''))).json(); }
-  catch(e){ return; }
-  if(aj.error){ return; }
+  let aj=await TaskClient.json('/api/align?job='+encodeURIComponent(JOB)+(version?'&v='+encodeURIComponent(version):''));
+  const preservedAnchors=new Set(ANCHOR_ROWS);
+  if(Array.isArray(draftLines))aj={...aj,lines:draftLines};
   ALIGN = aj;
+  const selectedVersion=$('#tuneVersion').selectedOptions[0];
+  let savedAnchors=[];
+  try{savedAnchors=JSON.parse(selectedVersion?.dataset.anchorRows||'[]');}catch{}
+  if(!Array.isArray(savedAnchors)||!savedAnchors.length){const old=selectedVersion?.dataset.anchorRow;savedAnchors=old==null||old===''?[]:[Number(old)];}
+  ANCHOR_ROWS=EDIT_DRAFT_ID?preservedAnchors:new Set(savedAnchors.map(Number).filter(Number.isInteger));
   const acceptance=aj.acceptance||{},box=$('#acceptanceBox');box.replaceChildren();box.dataset.status=acceptance.status||'needs_review';
+  box.classList.toggle('hidden',Boolean(EDIT_DRAFT_ID));
+  const status=acceptance.status||'needs_review',issueCount=(acceptance.issues||[]).length;
+  const reviewMeta=$('#reviewSummaryMeta');reviewMeta.textContent=`${acceptance.label||'尚无验收结论'} · ${issueCount} 项提示`;reviewMeta.dataset.status=status;
   const heading=document.createElement('h3');heading.textContent='自动验收 · '+(acceptance.label||'尚无依据');box.append(heading);
   const counts=document.createElement('p');counts.textContent=`输入 ${acceptance.input_lines??'未知'} 行 → 输出 ${acceptance.output_lines??aj.lines.length} 行 · ${acceptance.acoustic_lines??0} 句有当前声学依据`;box.append(counts);
   const issueBox=document.createElement('details'),issueSummary=document.createElement('summary');issueSummary.textContent=`验收提示 · ${(acceptance.issues||[]).length} 项`;issueBox.append(issueSummary);
@@ -1252,11 +1575,6 @@ async function loadAlign(version=''){
   $('#retryMsg').textContent=retry?`本轮尝试 ${retry.attempted} 句，接受 ${retry.accepted} 句。`:'先保存手动修改。只尝试可靠相邻句之间的短窗口，不会自动补写缺失歌词。';
   if(retry?.items?.length){const details=document.createElement('details'),summary=document.createElement('summary');summary.textContent='查看局部重试记录';details.append(summary);for(const item of retry.items){const p=document.createElement('p');p.textContent=`第 ${item.row} 行：${item.reason}`;details.append(p)}box.append(details);}
 
-  const anchors=$('#anchorRow');anchors.replaceChildren();
-  aj.lines.slice(0,-1).forEach((line,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`第 ${i+1} 句 · ${line.raw}`;anchors.append(o);});
-  const positions=$('#insertAfter');positions.replaceChildren();
-  aj.lines.forEach((line,i)=>{const o=document.createElement('option');o.value=i;o.textContent=`第 ${i+1} 句 · ${line.raw}`;positions.append(o);});
-  $('#btnAnchor').disabled=!EDITABLE||aj.lines.length<2;
   const opts=aj.options||{};
   for(const [key,id] of [['sung_color','sung'],['unsung_color','unsung']]){
     if(Array.isArray(opts[key]))$('#'+id).value='#'+opts[key].map(v=>Number(v).toString(16).padStart(2,'0')).join('');
@@ -1266,38 +1584,73 @@ async function loadAlign(version=''){
     const input=$('#'+id);if(input&&opts[key]!=null){if(input.type==='checkbox')input.checked=opts[key];else input.value=opts[key];}
   }
   $('#lineCount').value=String(Math.max(1,Math.min(3,opts.next_line===false?1:Number(opts.line_count??2))));
-  $('#positionX').value=String(opts.position_x ?? 50);
-  $('#positionY').value=String(opts.position_y ?? Math.round((1-(Number(opts.margin_v??118)/1080))*100));
-  $('#positionXVal').textContent=$('#positionX').value+'%';$('#positionYVal').textContent=$('#positionY').value+'%';
+  ACTIVE_LINE_POSITIONS=normalizeLinePositions({...opts,position_y:opts.position_y ?? (100-(Number(opts.margin_v??118)/1080*100))});
+  $('#positionRow').value='0';updatePositionLineChoices();syncPositionControls();
   updatePreviewPositionLimit();
   TUNE_VERSION=Number(version)||0;TUNE_LOOP=null;$('#loopInfo').textContent='';
+  writeLocal('lets-karaoke:last-workspace',{job:JOB,path:jobIdentity(JOB),version:TUNE_VERSION});
   const currentHealth=aj.health||{};
   $('#healthBadge').textContent=`当前${TUNE_VERSION?' v'+TUNE_VERSION:'原始版'} · 结构自检 ${currentHealth.ok?'通过':'需检查'}`;
   $('#healthBadge').className='badge '+(currentHealth.ok?'ok':'bad');
   const evidence = aj.diagnostics || {lines:[]};
   const missing=evidence.missing_input_rows||[],alert=$('#missingLyricAlert');
   alert.classList.toggle('hidden',!missing.length);
+  if(EDIT_DRAFT_ID)alert.classList.add('hidden');
   alert.textContent=missing.length?`发现 ${missing.length} 行输入歌词没有生成字幕：原歌词第 ${missing.map(r=>r.row).join('、')} 行。请确认现场是否漏唱；需要保留时可在下方插入并定位。`:'';
   const diagnosticRows = (evidence.lines||[]).map((r,i)=>({...r,tokens:aj.lines[i]?.tokens}));
+  $('#alignmentDiagnostics').classList.toggle('hidden',Boolean(EDIT_DRAFT_ID));
   AlignmentDiagnostics.mount($('#alignmentDiagnostics'), {...evidence,lines:diagnosticRows}, $('#player'));
+  if(EDIT_DRAFT_ID){
+    $('#reviewSummaryMeta').textContent='暂存修改 · 尚未生成视频或更新自动验收';
+    $('#acceptanceBox').dataset.status='needs_review';
+  }
   const tb = $('#tuneBody');
   tb.innerHTML = aj.lines.map((ln, i) => `
     <tr data-tune-row="${i}">
       <td class="num">${i+1}</td>
-      <td class="txt"><details><summary>${escapeText(ln.raw)}</summary><div style="max-height:230px;overflow:auto;margin-top:8px">${(ln.tokens||[]).map((t,j)=>`<label style="display:flex;align-items:center;gap:8px;margin:5px 0"><span style="min-width:38px">${escapeText(t.disp||t.text)}</span><span class="hint">${fmtT(t.start)}–${fmtT(t.end)}</span><input aria-label="第${i+1}行第${j+1}字词偏移毫秒" type="number" step="10" placeholder="0 ms" data-token="${i}:${j}" style="width:95px;margin-left:auto"></label>`).join('')}</div></details></td>
-      <td><input type="number" min="0" step="0.001" value="${ln.start}" data-bound-start="${i}" aria-label="第${i+1}句起点秒"><div class="hint">${fmtT(ln.start)}</div></td>
-      <td><input type="number" min="0" step="0.001" value="${ln.end}" data-bound-end="${i}" aria-label="第${i+1}句终点秒"><div class="hint">${fmtT(ln.end)}</div></td>
+      <td class="txt"><input class="line-lyric-input" type="text" value="${escapeText(ln.raw)}" data-line-text="${i}" aria-label="编辑第${i+1}句歌词"><details><summary>字词偏移</summary><div style="max-height:230px;overflow:auto;margin-top:8px">${(ln.tokens||[]).map((t,j)=>`<label style="display:flex;align-items:center;gap:8px;margin:5px 0"><span style="min-width:38px">${escapeText(t.disp||t.text)}</span><span class="hint">${fmtT(t.start)}–${fmtT(t.end)}</span><input aria-label="第${i+1}行第${j+1}字词偏移毫秒" type="number" step="10" placeholder="0 ms" data-token="${i}:${j}" style="width:95px;margin-left:auto"></label>`).join('')}</div></details></td>
+      <td class="anchor-cell"><button type="button" class="mini" data-insert-after="${i}" aria-label="在第${i+1}句后插入歌词" title="在此句后插入歌词">＋</button></td>
+      <td class="anchor-cell"><button type="button" class="mini anchor-toggle" data-anchor-row="${i}" aria-pressed="false">⚓</button></td>
+      <td><input type="text" inputmode="decimal" class="time-input" value="${fmtEditTime(ln.start)}" data-bound-start="${i}" aria-label="第${i+1}句起点，分:秒"><div class="hint">起点</div></td>
+      <td><input type="text" inputmode="decimal" class="time-input" value="${fmtEditTime(ln.end)}" data-bound-end="${i}" aria-label="第${i+1}句终点，分:秒"><div class="hint">终点</div></td>
       <td><input type="number" step="10" placeholder="0" data-line="${i}"></td>
       <td><button class="mini" data-seek="${ln.start}">▶</button><button class="mini" data-loop="${i}" title="循环试听这一句">↻</button></td>
     </tr>`).join('');
+  updateAnchorControls();
   $('#tuneCard').classList.remove('hidden');
   WAVEFORM?.destroy();
   WAVEFORM=LyricWaveform.mount($('#waveformHost'),{job:JOB,lines:aj.lines,player:$('#player'),
-    canEdit:()=>EDITABLE&&!EDITING,
+    canEdit:()=>EDITABLE&&!EDITING&&!GENERATION_BUSY,
     onLoop:()=>{TUNE_LOOP=null;$('#loopInfo').textContent='波形选区循环';},
-    getBounds:i=>({start:Number($(`[data-bound-start="${i}"]`).value),end:Number($(`[data-bound-end="${i}"]`).value)}),
-    onBounds:(i,start,end)=>{$(`[data-bound-start="${i}"]`).value=start;$(`[data-bound-end="${i}"]`).value=end;$('#rerenderMsg').textContent=`第 ${i+1} 句波形边界已修改，尚未提交；点击应用并重新渲染。`;}});
-  tb.oninput=()=>WAVEFORM?.refresh();
+    getBounds:i=>({start:parseTuneTime($(`[data-bound-start="${i}"]`).value),end:parseTuneTime($(`[data-bound-end="${i}"]`).value)}),
+    onBounds:(i,start,end)=>{$(`[data-bound-start="${i}"]`).value=fmtEditTime(start);$(`[data-bound-end="${i}"]`).value=fmtEditTime(end);setAnchorCandidate(i);$('#rerenderMsg').textContent=`第 ${i+1} 句波形边界已修改，尚未提交；点击主按钮应用。`;}});
+  tb.oninput=event=>{
+    WAVEFORM?.refresh();
+    const input=event.target;
+    if(input.matches('input[data-line-text]'))syncTokenEditState(Number(input.dataset.lineText));
+    if(input.matches('input[data-bound-start],input[data-bound-end],input[data-line],input[data-token]')){
+      const row=Number(input.closest('tr')?.dataset.tuneRow);
+      if(Number.isInteger(row))setAnchorCandidate(row);
+    }
+    persistDraft();
+  };
+  tb.onclick=event=>{
+    const button=event.target.closest('button[data-anchor-row]');
+    if(button)toggleAnchorCandidate(Number(button.dataset.anchorRow));
+    const insertButton=event.target.closest('button[data-insert-after]');
+    if(insertButton)openInlineInsert(Number(insertButton.dataset.insertAfter));
+    const cancel=event.target.closest('button[data-insert-cancel]');
+    if(cancel){tb.querySelector('[data-insert-editor]')?.remove();persistDraft();}
+    const save=event.target.closest('button[data-insert-save]');
+    if(save)saveInlineInsert(Number(save.dataset.insertSave));
+  };
+  tb.onchange=event=>{
+    if(event.target.matches('[data-insert-mode]')){
+      const editor=event.target.closest('[data-insert-editor]');
+      editor.querySelector('[data-insert-manual]').classList.toggle('hidden',event.target.value!=='manual');
+      persistDraft();
+    }
+  };
   updatePlayingLine(false);
 
   tb.querySelectorAll('button[data-seek]').forEach(b =>
@@ -1319,6 +1672,9 @@ async function loadAlign(version=''){
   $('#rerenderMsg').textContent = TUNE_VERSION ? `正在编辑微调版 v${TUNE_VERSION}；下一次修改会基于此版本。` : ow.applied
     ? `已用 ${ow.anchors} 个行级锚点把时间吸附到歌词时间戳。`
     : '未使用时间戳吸附（歌词无时间戳，或已指定忽略）。';
+  if(!ANCHOR_API_SUPPORTED)$('#rerenderMsg').textContent+=' 本地后台尚未加载锚点更新，请重启后台并刷新页面。';
+  if(EDIT_DRAFT_ID)$('#rerenderMsg').textContent='暂存修改已更新到下方时间表；播放器仍显示上一个已生成版本。插入和调整完成后，点击“生成暂存修改”。';
+  if(EDITING||GENERATION_BUSY)$('#tuneBody').querySelectorAll('input,select,button').forEach(i=>i.disabled=true);
 }
 const fmtT = s => {
   if(s == null) return '—';
@@ -1326,107 +1682,215 @@ const fmtT = s => {
   return m + ':' + r.toFixed(2).padStart(5,'0');
 };
 
-async function submitEdit(anchorRow=null,insertion=null,retry=false){
-  if(!JOB||!EDITABLE||EDITING){ return; }
+function fmtEditTime(value){
+  const ms=Math.max(0,Math.round(Number(value)*1000));
+  const m=Math.floor(ms/60000),s=(ms%60000)/1000;
+  return `${m}:${s.toFixed(3).padStart(6,'0')}`;
+}
+function parseTuneTime(value){
+  const text=String(value??'').trim();
+  if(!text)return NaN;
+  const clock=text.match(/^(\d+)\s*:\s*(\d{1,2}(?:[.,]\d+)?)$/);
+  if(clock){const seconds=Number(clock[2].replace(',','.'));return seconds<60?Number(clock[1])*60+seconds:NaN;}
+  const seconds=Number(text.replace(',','.'));
+  return Number.isFinite(seconds)?seconds:NaN;
+}
+
+function openInlineInsert(after){
+  const body=$('#tuneBody');
+  body.querySelector('[data-insert-editor]')?.remove();
+  const row=body.querySelector(`[data-tune-row="${after}"]`);
+  if(!row)return;
+  const editor=document.createElement('tr');editor.className='inline-insert-editor';editor.dataset.insertEditor='';
+  editor.innerHTML=`<td colspan="8"><div style="display:flex;align-items:flex-start;gap:8px;flex-wrap:wrap">
+    <label style="flex:1;min-width:240px">插入到第 ${after+1} 句之后 <input type="text" data-insert-text placeholder="输入新增歌词" style="width:100%"></label>
+    <label>定位方式 <select data-insert-mode style="width:auto"><option value="auto">自动对齐此句及后续</option><option value="manual">手动指定起止时间</option></select></label>
+    <div data-insert-manual class="hidden" style="display:flex;gap:8px"><label>起点 <input type="text" inputmode="decimal" data-insert-start placeholder="分:秒" style="width:100px"></label><label>终点 <input type="text" inputmode="decimal" data-insert-end placeholder="分:秒" style="width:100px"></label></div>
+    <div style="display:flex;gap:6px;align-items:flex-end"><button class="mini primary" data-insert-save="${after}">暂存插入</button><button class="mini" data-insert-cancel>取消</button></div>
+  </div><div class="hint">只更新下方歌词和时间表，不生成视频；完成所有插入和微调后再统一生成。</div></td>`;
+  row.after(editor);
+  editor.querySelector('[data-insert-text]').focus();
+}
+
+function saveInlineInsert(after){
+  const editor=$('#tuneBody [data-insert-editor]');
+  if(!editor)return;
+  const text=editor.querySelector('[data-insert-text]').value.trim();
+  if(!text){editor.querySelector('[data-insert-text]').focus();$('#rerenderMsg').textContent='请输入要插入的歌词。';return;}
+  const mode=editor.querySelector('[data-insert-mode]').value;
+  const insertion={after_row:after,text,mode};
+  if(mode==='manual'){
+    insertion.start=parseTuneTime(editor.querySelector('[data-insert-start]').value);
+    insertion.end=parseTuneTime(editor.querySelector('[data-insert-end]').value);
+    if(!Number.isFinite(insertion.start)||!Number.isFinite(insertion.end)||insertion.start<0||insertion.end<=insertion.start){$('#rerenderMsg').textContent='请输入有效的起止时间，格式为分:秒，且终点晚于起点。';return;}
+  }
+  submitEdit(null,insertion,false,true);
+}
+
+async function submitEdit(anchorRows=null,insertion=null,retry=false,deferRender=false){
+  if(!JOB||!EDITABLE||EDITING||GENERATION_BUSY){ return; }
+  if(anchorRows?.length&&!ANCHOR_API_SUPPORTED){$('#rerenderMsg').textContent='本地后台尚未加载锚点更新，请重启后台并刷新页面。';return;}
+  if(anchorRows?.length&&anchorRows[0]===(ALIGN?.lines.length||0)-1){
+    $('#rerenderMsg').textContent='末句只能作为区间结束锚点；请同时选择它之前的一句。';return;
+  }
   const offs = {};
   const bounds = {};
   const tokenOffs = {};
+  const lineTexts = {};
+  let invalidText=false;
+  document.querySelectorAll('#tuneBody input[data-line-text]').forEach(input=>{
+    const row=Number(input.dataset.lineText),text=input.value.trim();
+    if(!text){$('#rerenderMsg').textContent=`第 ${row+1} 句歌词不能为空。`;input.focus();invalidText=true;return;}
+    if(text!==ALIGN.lines[row].raw)lineTexts[row]=text;
+  });
+  if(invalidText)return;
   document.querySelectorAll('#tuneBody input[data-token]').forEach(i=>{const v=Number(i.value);if(Number.isFinite(v)&&v!==0)tokenOffs[i.dataset.token]=v;});
   document.querySelectorAll('#tuneBody input[data-line]').forEach(i => {
     const v = parseFloat(i.value);
     if(!isNaN(v) && v !== 0) offs[i.dataset.line] = v;
   });
   for(let i=0;i<ALIGN.lines.length;i++){
-    if(anchorRow!==null&&i>anchorRow)continue;
     const a=$(`[data-bound-start="${i}"]`),b=$(`[data-bound-end="${i}"]`);
-    const start=Number(a.value),end=Number(b.value),original=ALIGN.lines[i];
-    if(!a.value||!b.value||!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start){
-      $('#rerenderMsg').textContent=`第 ${i+1} 句：请输入有效起止时间，终点必须晚于起点。`;a.focus();return;
+    const start=parseTuneTime(a.value),end=parseTuneTime(b.value),original=ALIGN.lines[i];
+    if(!a.value.trim()||!b.value.trim()||!Number.isFinite(start)||!Number.isFinite(end)||start<0||end<=start){
+      $('#rerenderMsg').textContent=`第 ${i+1} 句：请输入有效起止时间（分:秒），且终点必须晚于起点。`;a.focus();return;
     }
-    if(start!==original.start||end!==original.end){
+    if(Math.abs(start-original.start)>0.00051||Math.abs(end-original.end)>0.00051){
       const shift=(offs[i]||0)/1000;
       bounds[i]={start:start+shift,end:end+shift};delete offs[i];
     }
   }
-  if(anchorRow!==null){
-    for(const key of Object.keys(offs))if(Number(key)>anchorRow)delete offs[key];
-    for(const key of Object.keys(tokenOffs))if(Number(key.split(':')[0])>anchorRow)delete tokenOffs[key];
-  }
-  if(retry&&(Object.keys(offs).length||Object.keys(bounds).length||Object.keys(tokenOffs).length)){
+  if(retry&&(Object.keys(offs).length||Object.keys(bounds).length||Object.keys(tokenOffs).length||Object.keys(lineTexts).length)){
     $('#retryMsg').textContent='请先应用并重新渲染，或清空偏移并还原起止时间，再运行局部重试。';return;
   }
-  EDITING=true;
-  for(const id of ['btnRetry','btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=true;
-  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=true);
-  renderHistory();
-  $('#rerenderMsg').textContent = retry?'正在局部重试疑难句…':anchorRow===null?'重新渲染中…':'正在以人工锚点重新分析后续音频并生成版本，请保持页面打开…';
-  try {
-    const r = await fetch('/api/rerender', {
-      method:'POST',
-      body: JSON.stringify({ job: JOB, base_version:TUNE_VERSION, retry_suspects:retry, anchor_row:anchorRow, line_insertion:insertion, line_bounds:bounds, line_offsets: offs, token_offsets:tokenOffs, options: styleOptions() })
-    });
-    const d = await r.json();
-    if(d.error){ throw new Error(d.error); }
-    if(d.unchanged){$('#retryMsg').textContent=`尝试 ${d.retry.attempted} 句，没有可安全替换的候选，保留当前版本。`;
-      $('#rerenderMsg').textContent=d.retry.items.map(i=>`第 ${i.row} 行：${i.reason}`).join('；')||'没有适合自动重试的句子。';return;}
-    const base = '/files/' + JOB + '/';
-    const name = d.video.split(/[\\/]/).pop();
-    const v = $('#player');
-    v.src = base + encodeURIComponent(name) + '?t=' + Date.now();
-    v.load();
-    TUNE_LOOP=null;
-    const option=document.createElement('option');option.value=String(d.version);option.textContent=`微调版 v${d.version}`;option.dataset.video=v.src;$('#tuneVersion').append(option);$('#tuneVersion').value=String(d.version);
-    // 同时把下载区指向新版本
-    const dl = $('#dlBox');
-    const a = document.createElement('a');
-    a.href = base + encodeURIComponent(name) + '?download=1';
-    a.textContent = '↓ 微调版 v' + d.version;
-    a.setAttribute('download', name);
-    dl.prepend(a);
-    const h = d.health || {};
-    $('#healthBadge').textContent = `防重叠自检 ${h.ok ? '通过' : '异常'}`;
-    $('#healthBadge').className = 'badge ' + (h.ok ? 'ok' : 'bad');
-    $('#rerenderMsg').textContent = `已生成第 ${d.version} 版（编码器 ${d.encoder}）。`;
-    (d.logs||[]).forEach(l => logLine(l));
-    await loadAlign(d.version);
-    await loadVersions(d.version);
-    await refreshHistory();
-    if(insertion){$('#insertText').value='';$('#insertStart').value='';$('#insertEnd').value='';$('#insertMsg').textContent='插入完成，已生成版本 v'+d.version+'。';}
-  } catch(e){
-    $('#rerenderMsg').textContent = '失败：' + e.message;
-  }
-  finally {
-  EDITING=false;
-  for(const id of ['btnRetry','btnRerender','btnAnchor','btnInsert','tuneVersion','btnRun','btnReset'])$('#'+id).disabled=false;
-  $('#btnRetry').disabled=!EDITABLE;
-  $('#btnRerender').disabled=!EDITABLE;
-  $('#btnInsert').disabled=!EDITABLE;
-  $('#btnAnchor').disabled=!EDITABLE||(ALIGN?.lines.length||0)<2;
-  $('#tuneBody').querySelectorAll('input').forEach(i=>i.disabled=!EDITABLE);
-  renderHistory();
-  }
+  const context={target_job:JOB,base_version:TUNE_VERSION,anchorRows:EDIT_DRAFT_ID?[]:anchorRows,insertion,retry,deferRender,priorAnchors:[...ANCHOR_ROWS]};
+  setEditBusy(true);
+  $('#rerenderMsg').textContent=deferRender?'正在提交暂存修改…':retry?'正在提交局部重试…':'正在提交微调任务到后台队列…';
+  try{
+    let d=await TaskClient.json('/api/rerender',{
+      job:JOB,base_version:TUNE_VERSION,retry_suspects:retry,anchor_rows:context.anchorRows,
+      line_insertion:insertion,line_bounds:bounds,line_texts:lineTexts,line_offsets:offs,
+      token_offsets:tokenOffs,options:styleOptions(),draft_id:EDIT_DRAFT_ID,defer_render:deferRender,
+      async:ASYNC_EDIT_SUPPORTED,
+    },{timeout:ASYNC_EDIT_SUPPORTED?20000:120000});
+    if(d.operation_job){
+      EDIT_OPERATION=d.operation_job;
+      rememberTask(EDIT_OPERATION,{kind:'edit',target_job:JOB,context,created:Date.now()/1000});
+      $('#btnCancelEdit').disabled=false;
+      const outcome=await watch(EDIT_OPERATION,0,1,true);
+      if(outcome.state!=='done'){
+        if(!outcome.unconfirmed){rememberEditFailure(EDIT_OPERATION,context);forgetTask(EDIT_OPERATION);}
+        throw new Error(outcome.error||'微调任务已取消；已保存版本和暂存修改可继续使用。');
+      }
+      d=outcome.result;
+    }
+    await applyEditResult(d,context);
+    removeLocal(editFailureKey(JOB));
+    if(EDIT_OPERATION)forgetTask(EDIT_OPERATION);
+  }catch(error){$('#rerenderMsg').textContent='失败：'+error.message;}
+  finally{EDIT_OPERATION=null;setEditBusy(false);await refreshHistory();}
 }
-$('#btnRetry').onclick=()=>submitEdit(null,null,true);
-$('#btnRerender').onclick=()=>submitEdit();
-$('#btnAnchor').onclick=()=>{if($('#anchorRow').value!=='')submitEdit(Number($('#anchorRow').value));};
-$('#insertMode').onchange=()=>$('#insertManual').classList.toggle('hidden',$('#insertMode').value!=='manual');
-$('#btnInsert').onclick=()=>{
-  const text=$('#insertText').value.trim(),mode=$('#insertMode').value,after=Number($('#insertAfter').value);
-  if(!text){$('#insertMsg').textContent='请输入要插入的歌词。';$('#insertText').focus();return;}
-  const insertion={after_row:after,text,mode};
-  if(mode==='manual'){
-    insertion.start=Number($('#insertStart').value);insertion.end=Number($('#insertEnd').value);
-    if(!$('#insertStart').value||!$('#insertEnd').value||!Number.isFinite(insertion.start)||!Number.isFinite(insertion.end)||insertion.start<0||insertion.end<=insertion.start){$('#insertMsg').textContent='请输入有效的起点和终点，终点必须晚于起点。';return;}
+function setEditBusy(busy){
+  EDITING=busy;
+  for(const id of ['btnRetry','btnRerender','tuneVersion','btnReset'])$('#'+id).disabled=busy||!EDITABLE;
+  $('#btnRun').disabled=busy||GENERATION_BUSY;
+  $('#tuneBody').querySelectorAll('input,select,button').forEach(i=>i.disabled=busy||GENERATION_BUSY||!EDITABLE);
+  $('#btnCancelEdit').classList.toggle('hidden',!busy);$('#btnCancelEdit').disabled=!EDIT_OPERATION;
+  $('#btnResumeEdit').classList.toggle('hidden',!readLocal(editFailureKey(JOB),null));$('#btnResumeEdit').disabled=busy||GENERATION_BUSY;
+  syncAllTokenEditStates();updateAnchorControls();renderHistory();
+}
+async function applyEditResult(d,context={}){
+  if(!d)throw new Error('微调任务未返回结果，请在历史记录检查。');
+  const anchorRows=context.anchorRows||d.anchor_rows||[],insertion=context.insertion;
+  const baseVersion=Number(context.base_version)||0;
+  if(anchorRows.length&&(!Array.isArray(d.anchor_rows)||JSON.stringify(d.anchor_rows)!==JSON.stringify(anchorRows)))
+    throw new Error('后台未确认应用所选锚点；请在历史记录检查此次结果。');
+  if(d.preview){
+    if(!d.draft_id||!Array.isArray(d.lines))throw new Error('暂存对齐没有返回歌词，请重试。');
+    const after=Number(insertion?.after_row),prior=context.priorAnchors||[...ANCHOR_ROWS];
+    EDIT_DRAFT_ID=d.draft_id;
+    ANCHOR_ROWS=new Set(insertion?prior.map(row=>row>after?row+1:row):prior);
+    await loadAlign(baseVersion,d.lines);persistDraft();
+    $('#insertMsg').textContent=`已暂存修改；下方时间表已更新，视频仍是 v${baseVersion}。完成后点击“生成暂存修改”。`;
+    return;
   }
-  $('#insertMsg').textContent=mode==='auto'?'正在重新分析插入点之后的音频…':'正在按指定时间生成…';submitEdit(null,insertion);
+  if(d.unchanged){
+    $('#retryMsg').textContent=`尝试 ${d.retry?.attempted||0} 句，没有可安全替换的候选，保留当前版本。`;
+    $('#rerenderMsg').textContent=(d.retry?.items||[]).map(i=>`第 ${i.row} 行：${i.reason}`).join('；')||'没有适合自动重试的句子。';return;
+  }
+  if(!d.video)throw new Error('微调任务未返回视频文件，请在历史记录检查。');
+  const base='/files/'+JOB+'/',name=d.video.split(/[\\/]/).pop(),v=$('#player');
+  v.src=base+encodeURIComponent(name)+'?t='+Date.now();v.load();TUNE_LOOP=null;
+  const a=document.createElement('a');a.href=base+encodeURIComponent(name)+'?download=1';a.textContent='↓ 微调版 v'+d.version;a.setAttribute('download',name);$('#dlBox').prepend(a);
+  const h=d.health||{};$('#healthBadge').textContent=`防重叠自检 ${h.ok?'通过':'异常'}`;$('#healthBadge').className='badge '+(h.ok?'ok':'bad');
+  removeLocal(draftKey(JOB,baseVersion));
+  EDIT_DRAFT_ID=null;$('#btnDiscardDraft').classList.add('hidden');
+  (d.logs||[]).forEach(l=>logLine(l));
+  await loadVersions(d.version);await loadAlign(d.version);await refreshHistory();
+  $('#rerenderMsg').textContent=`已生成第 ${d.version} 版（编码器 ${d.encoder}）。`;
+  $('#insertMsg').textContent=insertion?'插入完成，已生成版本 v'+d.version+'。':'';
+}
+async function recoverEdit(entry){
+  const target=entry.target_job||entry.context?.target_job;
+  if(!target){logLine('无法恢复微调任务的目标记录：'+entry.job,true);return;}
+  const record=HISTORY.find(r=>sameJob(r.job,target));
+  const context=entry.context||{target_job:target,base_version:record?.result?.version||0};
+  JOB=target;EDITABLE=record?.editable!==false;
+  if(record?.result)await finish(record.result);
+  EDIT_OPERATION=entry.job;setEditBusy(true);$('#btnCancelEdit').disabled=false;
+  try{
+    const outcome=await watch(entry.job,0,1,true);
+    if(outcome.state==='done'){await applyEditResult(outcome.result,context);removeLocal(editFailureKey(JOB));forgetTask(entry.job);}
+    else{
+      $('#rerenderMsg').textContent=outcome.error||'微调任务已取消；已保存版本可继续编辑。';
+      if(!outcome.unconfirmed){rememberEditFailure(entry.job,context);forgetTask(entry.job);}
+    }
+  }catch(error){$('#rerenderMsg').textContent='恢复微调失败：'+error.message;}
+  finally{EDIT_OPERATION=null;setEditBusy(false);}
+}
+$('#btnCancelEdit').onclick=async()=>{
+  if(!EDIT_OPERATION)return;
+  const failures=await TaskClient.cancelJobs([EDIT_OPERATION]);
+  $('#rerenderMsg').textContent=failures.length?'取消失败：'+failures[0].error+'；可再次点击重试。':'已请求取消微调，正在等待后台停止…';
+};
+$('#btnResumeEdit').onclick=async()=>{
+  if(EDITING||GENERATION_BUSY)return;
+  const saved=readLocal(editFailureKey(JOB),null);if(!saved)return;
+  setEditBusy(true);
+  try{
+    const d=await TaskClient.json('/api/resume',{job:saved.job});
+    const entry={...saved,job:d.job,target_job:d.target_job||saved.target_job,kind:'edit'};
+    rememberTask(d.job,entry);await recoverEdit(entry);
+  }catch(error){$('#rerenderMsg').textContent='重试失败：'+error.message;}
+  finally{setEditBusy(false);await refreshHistory();}
+};
+$('#btnRetry').onclick=()=>submitEdit(null,null,true);
+$('#btnRerender').onclick=()=>submitEdit(EDIT_DRAFT_ID?[]:[...ANCHOR_ROWS].sort((a,b)=>a-b));
+
+async function discardEditDraft(reload=true){
+  const id=EDIT_DRAFT_ID;
+  removeLocal(draftKey());
+  EDIT_DRAFT_ID=null;
+  $('#btnDiscardDraft').classList.add('hidden');
+  if(id){try{await fetch('/api/draft/discard',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({draft_id:id})});}catch{}}
+  if(reload&&JOB)await loadAlign(TUNE_VERSION);
+}
+$('#btnDiscardDraft').onclick=async()=>{
+  await discardEditDraft(true);
+  $('#insertMsg').textContent='已放弃暂存修改；视频和已保存版本未改变。';
+  updateAnchorControls();
 };
 
 $('#btnReset').addEventListener('click', () => {
   document.querySelectorAll('#tuneBody input').forEach(i => {
-    if(i.dataset.boundStart!==undefined)i.value=ALIGN.lines[Number(i.dataset.boundStart)].start;
-    else if(i.dataset.boundEnd!==undefined)i.value=ALIGN.lines[Number(i.dataset.boundEnd)].end;
+    if(i.dataset.boundStart!==undefined)i.value=fmtEditTime(ALIGN.lines[Number(i.dataset.boundStart)].start);
+    else if(i.dataset.boundEnd!==undefined)i.value=fmtEditTime(ALIGN.lines[Number(i.dataset.boundEnd)].end);
+    else if(i.dataset.lineText!==undefined)i.value=ALIGN.lines[Number(i.dataset.lineText)].raw;
     else i.value='';
   });
+  syncAllTokenEditStates();
+  ANCHOR_ROWS.clear();updateAnchorControls();
+  persistDraft();
 });
 function updatePlayingLine(jump=false){
   if(!ALIGN?.lines?.length)return;
@@ -1449,7 +1913,14 @@ $('#player').addEventListener('seeked',()=>updatePlayingLine(false));
 $('#stopLoop').onclick=()=>{WAVEFORM?.stopLoop();TUNE_LOOP=null;$('#loopInfo').textContent='';};
 $('#tuneSpeed').onchange=()=>{$('#player').playbackRate=Number($('#tuneSpeed').value);};
 $('#player').addEventListener('timeupdate',()=>{const v=$('#player');if(TUNE_LOOP&&v.currentTime>=TUNE_LOOP.end)v.currentTime=TUNE_LOOP.start;});
-$('#tuneVersion').onchange=async()=>{const s=$('#tuneVersion'),v=$('#player');TUNE_LOOP=null;v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();await loadAlign(Number(s.value)||'');};
+$('#tuneVersion').onchange=async()=>{
+  persistDraft();const s=$('#tuneVersion'),v=$('#player');TUNE_LOOP=null;EDIT_DRAFT_ID=null;
+  try{await loadAlign(Number(s.value)||'');v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();await restoreDraft(Number(s.value)||0);}
+  catch(error){EDITABLE=false;setEditBusy(false);showErr('版本无法加载：'+error.message+'；重新打开历史记录可重试。');}
+};
+for(const eventName of ['input','change'])document.addEventListener(eventName,event=>{
+  if(['font','fontSize','sung','unsung','lineCount','positionX','positionY','leadMs','tailMs','groupUnit'].includes(event.target.id))persistDraft();
+});
 </script>
 </body>
 </html>

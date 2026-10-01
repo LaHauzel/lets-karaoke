@@ -25,6 +25,7 @@ class HttpPolicyTests(unittest.TestCase):
 
     @classmethod
     def tearDownClass(cls):
+        webui.TASK_QUEUE.join()
         cls.server.shutdown()
         cls.server.server_close()
         webui.OUT_ROOT = cls.old_root

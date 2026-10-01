@@ -2,10 +2,10 @@
 import copy
 import math
 from pathlib import Path
-import subprocess
 import tempfile
 
 from alignment_review import normalized
+from process_runner import ProcessCancelled, run_process
 
 
 def valid_candidate(line, text, left, right):
@@ -27,14 +27,19 @@ def valid_candidate(line, text, left, right):
     return True
 
 
-def infer_clip(source, text, left, right, language, model, device, progress):
+def infer_clip(source, text, left, right, language, model, device, progress, cancel=None):
     from whisper_align import align_words, build_lines, DEFAULT_RULES
     from alignment_policy import resolve_rules
     with tempfile.TemporaryDirectory(prefix='karaoke_retry_') as temp:
         clip = Path(temp)/'clip.wav'
-        subprocess.run(['ffmpeg','-nostdin','-v','error','-ss',str(left),'-i',str(source),
+        run_process(['ffmpeg','-nostdin','-v','error','-ss',str(left),'-i',str(source),
                         '-t',str(right-left),'-vn','-ar','16000','-ac','1',str(clip)],
-                       check=True, capture_output=True, timeout=90)
+                    check=True, cancel=cancel, timeout=90)
+        callback = progress
+        def progress(frac, message):
+            if cancel and cancel():
+                raise ProcessCancelled('cancelled')
+            callback(frac, message)
         words = align_words(clip, text, language=language, model_size=model,
                             device=device, progress=progress)
         rows, report = build_lines(words, [text], resolve_rules(DEFAULT_RULES, profile='automatic'))
@@ -55,7 +60,9 @@ def retry_lines(lines, evidence, sources, duration, language, model='large-v3', 
 
     Adjacent suspect rows are deliberately deferred: they provide no safe anchor.
     """
-    infer = infer or infer_clip
+    if infer is None:
+        def infer(*args):
+            return infer_clip(*args, cancel=cancel)
     max_lines = min(3, max(0, int(max_lines)))
     result = list(lines)
     updated = copy.deepcopy(evidence)
@@ -89,13 +96,15 @@ def retry_lines(lines, evidence, sources, duration, language, model='large-v3', 
         best = None
         for source in sources:
             if cancel():
-                raise RuntimeError('cancelled')
+                raise ProcessCancelled('cancelled')
             progress(0, f'局部重试第 {records[i]["row"]} 句，窗口 {left:.2f}–{right:.2f}s')
             try:
                 candidate = infer(source, old.text, left, right, language, model, device, progress)
+            except ProcessCancelled:
+                raise
             except Exception as exc:
                 if cancel():
-                    raise RuntimeError('cancelled') from exc
+                    raise ProcessCancelled('cancelled') from exc
                 item.setdefault('errors', []).append(type(exc).__name__)
                 continue
             if candidate and valid_candidate(candidate, old.text, left, right):

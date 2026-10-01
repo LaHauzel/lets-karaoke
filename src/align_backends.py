@@ -19,12 +19,26 @@ from pathlib import Path
 
 import numpy as np
 
-from p0_common import SR, TokenSpan
+from p0_common import SR, TokenSpan, alignment_text
 
 
 # ==========================================================================
 # wav2vec2 CTC 强制对齐
 # ==========================================================================
+
+
+def _merge_owned_spans(spans, owners, tokens, ratio):
+    """Aggregate CTC character frames by token occurrence, including repeats."""
+    merged = []
+    previous_owner = None
+    for span, owner in zip(spans, owners):
+        start, end = span.start * ratio, span.end * ratio
+        if merged and previous_owner == owner:
+            merged[-1].end = max(merged[-1].end, end)
+        else:
+            merged.append(TokenSpan(text=tokens[owner], start=start, end=end, unit=owner))
+        previous_owner = owner
+    return merged
 
 
 class Wav2Vec2Aligner:
@@ -126,18 +140,10 @@ class Wav2Vec2Aligner:
         n_frames = log_probs.shape[1]
         ratio = n_samples / n_frames / SR
 
-        out: list[TokenSpan] = []
-        for span, oi in zip(spans, owner):
-            out.append(TokenSpan(text=tokens[oi], start=span.start * ratio, end=span.end * ratio))
-
         # 同 token 的多个 unit -> 合并为单一 span（保留首次出现顺序）
-        merged: list[TokenSpan] = []
-        for ts in out:
-            if merged and merged[-1].text == ts.text:
-                merged[-1].end = max(merged[-1].end, ts.end)
-            else:
-                merged.append(TokenSpan(text=ts.text, start=ts.start, end=ts.end))
-        return merged
+        # Text equality is insufficient: consecutive occurrences of “人” or
+        # “again” are different tokens even though their display text matches.
+        return _merge_owned_spans(spans, owner, tokens, ratio)
 
 
 # ==========================================================================
@@ -207,7 +213,7 @@ class QwenAligner:
         return {"class_name": cand, "symbols": names, "methods": meths, "call_sig": sig}
 
     def align(self, audio: np.ndarray, tokens: list[str], lang: str = "") -> list[TokenSpan]:
-        text = " ".join(tokens) if lang == "en" else "".join(tokens)
+        text = alignment_text(tokens, lang)
         lang_map = {"zh": "Chinese", "en": "English", "ja": "Japanese"}
         lang_arg = lang_map.get(lang, "Chinese")
 

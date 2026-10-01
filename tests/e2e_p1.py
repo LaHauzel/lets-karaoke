@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import sys
 import time
@@ -93,8 +94,28 @@ def score(truth: list[dict], produced: list[dict]) -> dict:
     return boundary_metrics(T, P)
 
 
+def quality_failures(record, expected_lines, expected_tokens, max_start_p90_ms=250):
+    """Synthetic regression gates, separate from real-singing accuracy claims."""
+    failures = []
+    if not record.get('pipeline_ok', record.get('ok')):
+        return ['pipeline_failed']
+    metrics = record.get('metrics', {})
+    if record.get('output_lines') != expected_lines:
+        failures.append('line_count_mismatch')
+    if metrics.get('n_pred') != expected_tokens or metrics.get('n') != expected_tokens or metrics.get('skipped', 0):
+        failures.append('incomplete_token_mapping')
+    if not record.get('health', {}).get('ok'):
+        failures.append('invalid_subtitle_structure')
+    p90 = metrics.get('start_p90_ms', math.inf)
+    if not math.isfinite(p90) or p90 > max_start_p90_ms:
+        failures.append('start_p90_exceeds_budget')
+    if not record.get('outputs_exist'):
+        failures.append('missing_output')
+    return failures
+
+
 def run_case(name: str, lang: str, variant: str, separate: bool, lyr_mode: str,
-             man: dict, cache: ModelCache) -> dict:
+             man: dict, cache: ModelCache, max_start_p90_ms=250) -> dict:
     d = man["langs"][lang]
     v = d["variants"][variant]
     audio = ROOT / v["audio"]
@@ -121,7 +142,7 @@ def run_case(name: str, lang: str, variant: str, separate: bool, lyr_mode: str,
     wall = time.perf_counter() - t0
 
     rec = {"case": name, "lang": lang, "variant": variant,
-           "separate": separate, "lyrics": lyr_mode, "ok": res.ok,
+           "separate": separate, "lyrics": lyr_mode, "ok": res.ok, 'pipeline_ok':res.ok,
            "error": res.error, "wall_sec": round(wall, 2),
            "job_dir": res.job_dir, "video": res.video}
     if not res.ok:
@@ -134,29 +155,45 @@ def run_case(name: str, lang: str, variant: str, separate: bool, lyr_mode: str,
     rec["mapping"] = aj["mapping"]
     rec["warp"] = aj["warp"]
     rec["stats"] = res.stats
+    rec['output_lines'] = len(aj['lines'])
+    rec['outputs_exist'] = all(p and Path(p).is_file() and Path(p).stat().st_size > 0
+        for p in (res.video,res.ass,res.srt,res.align_json))
 
     # 行级：比较每行起点
     k, lerr = 0, []
     for ln, n in zip(aj["lines"], counts):
-        lerr.append(ln["tokens"][0]["start"] - truth[k]["start"])
+        if ln['tokens']:
+            lerr.append(ln["tokens"][0]["start"] - truth[k]["start"])
         k += n
     lerr = np.abs(np.array(lerr)) * 1000
-    rec["line_start_mae_ms"] = round(float(lerr.mean()), 1)
+    rec["line_start_mae_ms"] = round(float(lerr.mean()), 1) if len(lerr) else None
     rec["video_mb"] = round(Path(res.video).stat().st_size / 1024 / 1024, 2)
     rec["video_exists"] = Path(res.video).exists()
+    rec['quality_failures'] = quality_failures(rec,len(lines),len(truth),max_start_p90_ms)
+    rec['ok'] = not rec['quality_failures']
+    if not rec['ok']:
+        rec['error'] = ', '.join(rec['quality_failures'])
     return rec
 
 
 def main(argv=None) -> int:
+    global OUT
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", default="")
     ap.add_argument("--device", default="cuda")
+    ap.add_argument('--max-start-p90-ms',type=float,default=250,
+                    help='Synthetic start-time P90 regression budget; not a singing-quality claim')
+    ap.add_argument('--out-dir',type=Path,default=OUT)
     args = ap.parse_args(argv)
-
+    if not math.isfinite(args.max_start_p90_ms) or args.max_start_p90_ms <= 0:
+        ap.error('--max-start-p90-ms must be finite and positive')
+    cases = [c for c in CASES if (not args.only or args.only in c[0])]
+    if not cases:
+        ap.error('--only did not match any case')
+    OUT = args.out_dir.resolve()
     OUT.mkdir(parents=True, exist_ok=True)
     man = load_manifest()
     cache = ModelCache(args.device)
-    cases = [c for c in CASES if (not args.only or args.only in c[0])]
 
     recs = []
     print(f"{'用例':<10} {'后端口径':<26} {'起点MAE':>8} {'中位':>7} "
@@ -164,7 +201,7 @@ def main(argv=None) -> int:
     print("-" * 92)
     for name, lang, variant, sep, lm in cases:
         try:
-            r = run_case(name, lang, variant, sep, lm, man, cache)
+            r = run_case(name, lang, variant, sep, lm, man, cache, args.max_start_p90_ms)
         except Exception as e:  # noqa: BLE001
             r = {"case": name, "ok": False, "error": f"{type(e).__name__}: {e}"}
         recs.append(r)

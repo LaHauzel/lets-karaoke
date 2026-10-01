@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import copy
 import json
 import mimetypes
 import os
@@ -31,9 +32,12 @@ import sys
 import threading
 import time
 import traceback
+import queue
+import tempfile
 import urllib.parse
+import uuid
 import webbrowser
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -41,10 +45,19 @@ _HERE = Path(__file__).resolve().parent
 if str(_HERE) not in sys.path:
     sys.path.insert(0, str(_HERE))
 
+from ass_builder import parse_line_positions
+
 ROOT = _HERE.parent
 ASSETS = _HERE / "webui_assets"
 OUT_ROOT = ROOT / "out" / "webui"
 MAX_BODY = 3 * 1024 ** 3          # 3 GB 上传上限
+DEFAULT_DEVICE = 'cuda'
+UPLOAD_SLOTS = threading.BoundedSemaphore(2)
+RESOURCE_LOCK = threading.RLock()
+TASK_QUEUE = queue.Queue()
+WORKER_LOCK = threading.Lock()
+WORKER = None
+STOP_WORKER = threading.Event()
 
 from alignment_policy import resolve_rules, schema
 from whisper_align import DEFAULT_RULES, postprocess_lines
@@ -105,16 +118,246 @@ class Job:
     whisper_lrc: str | None = None   # whisper 对齐产出的逐字增强 LRC
     whisper_info: dict | None = None
     sofa_info: dict | None = None    # SOFA 对齐诊断
+    kind: str = 'generate'
+    storage_dir: Path | None = None
+    target_job: str | None = None
 
     def add(self, frac: float, msg: str) -> None:
         self.progress = max(0.0, min(1.0, float(frac)))
         stamp = time.strftime("%H:%M:%S")
         self.logs.append(f"{stamp}  {msg}")
+        self.logs[:] = self.logs[-500:]
+        persist_job(self)
 
 
 JOBS: dict[str, Job] = {}
-LOCK = threading.Lock()
+LOCK = threading.RLock()
 EDIT_LOCK = threading.Lock()
+EDIT_DRAFTS: dict[str, dict] = {}
+
+
+def atomic_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(path.name+'.'+uuid.uuid4().hex+'.tmp')
+    try:
+        temp.write_text(json.dumps(data, ensure_ascii=False), encoding='utf-8')
+        temp.replace(path)
+    finally:
+        temp.unlink(missing_ok=True)
+
+
+def persist_job(job):
+    atomic_json((job.storage_dir or job.dir)/'history_status.json', {
+        'job': job.id, 'state': job.state, 'progress': job.progress,
+        'error': job.error, 'created': job.created, 'result': job.result,
+        'logs': job.logs, 'kind': job.kind, 'target_job': job.target_job})
+
+
+def _queue_worker():
+    while not STOP_WORKER.is_set():
+        try:
+            job, config = TASK_QUEUE.get(timeout=.5)
+        except queue.Empty:
+            continue
+        try:
+            with RESOURCE_LOCK:
+                if STOP_WORKER.is_set():
+                    return  # Leave this request queued on disk for next startup.
+                if job.cancel_req:
+                    job.state = 'cancelled'
+                    persist_job(job)
+                elif job.kind == 'edit':
+                    job.state = 'running'
+                    job.add(0, '开始调整字幕')
+                    job.result = perform_edit(config, job)
+                    job.state, job.progress = 'done', 1.0
+                    persist_job(job)
+                else:
+                    _run_job(job, copy.deepcopy(config))
+                if job.state in {'queued', 'running'}:
+                    job.state = 'error'
+                    job.error = '任务没有返回完成状态'
+                    persist_job(job)
+        except Exception as exc:
+            job.state = 'cancelled' if job.cancel_req else 'error'
+            job.error = f'{type(exc).__name__}: {exc}'
+            try:
+                persist_job(job)
+            except OSError:
+                # Disk exhaustion must not kill the only queue worker. The
+                # in-memory failure remains available to the active browser.
+                traceback.print_exc()
+        finally:
+            TASK_QUEUE.task_done()
+            with LOCK:
+                completed = sorted((j for j in JOBS.values() if j.state not in {'queued','running'}), key=lambda j:j.created)
+                for old in completed[:-200]:
+                    JOBS.pop(old.id, None)
+
+
+def enqueue_job(job, config):
+    global WORKER
+    atomic_json((job.storage_dir or job.dir)/'task_request.json', {
+        'job':job.id, 'directory':str(job.dir), 'kind':job.kind,
+        'created':job.created, 'target_job':job.target_job, 'config':config})
+    with LOCK:
+        job.state, job.error, job.cancel_req = 'queued', None, False
+        JOBS[job.id] = job
+        job.add(0, '已进入本机处理队列')
+        TASK_QUEUE.put((job, config))
+    with WORKER_LOCK:
+        if WORKER is None or not WORKER.is_alive():
+            WORKER = threading.Thread(target=_queue_worker, daemon=True, name='karaoke-worker')
+            WORKER.start()
+
+
+def restore_jobs(start_queued=True):
+    requests = list(OUT_ROOT.glob('*/task_request.json')) + list((OUT_ROOT/'.tasks').glob('*/task_request.json'))
+    pending = []
+    for path in requests:
+        try:
+            request = json.loads(path.read_text(encoding='utf-8'))
+            status = json.loads(path.with_name('history_status.json').read_text(encoding='utf-8'))
+            directory = Path(request['directory']).resolve()
+            if not directory.is_relative_to((ROOT/'out').resolve()) and not directory.is_relative_to(OUT_ROOT.resolve()):
+                continue
+            job = Job(request['job'], directory, state=status.get('state','interrupted'),
+                      created=request.get('created',time.time()), kind=request.get('kind','generate'),
+                      storage_dir=path.parent if request.get('kind')=='edit' else None,
+                      target_job=request.get('target_job'))
+            job.result, job.error, job.logs = status.get('result'), status.get('error'), status.get('logs', [])[-500:]
+            job.progress = status.get('progress',0)
+            if job.state == 'running':
+                job.state = 'interrupted'
+                job.error = '后台曾中断，可从历史记录重新开始此任务。'
+                persist_job(job)
+            with LOCK:
+                if job.id in JOBS:
+                    continue
+                JOBS[job.id] = job
+            if job.state == 'queued':
+                pending.append((job,request['config']))
+        except (OSError, ValueError, KeyError, TypeError):
+            continue
+    if start_queued:
+        for job, config in sorted(pending,key=lambda pair:pair[0].created):
+            enqueue_job(job,config)
+
+
+def load_draft(identifier):
+    if not identifier or not re.fullmatch(r'[0-9a-f]{32}', identifier):
+        return None
+    if identifier in EDIT_DRAFTS:
+        return EDIT_DRAFTS[identifier]
+    path = OUT_ROOT/'.drafts'/f'{identifier}.json'
+    if not path.is_file():
+        return None
+    from ass_builder import KaraokeLine, KaraokeToken
+    draft = json.loads(path.read_text(encoding='utf-8'))
+    draft['lines'] = [KaraokeLine(**{**row,'tokens':[KaraokeToken(**t) for t in row['tokens']]}) for row in draft['lines']]
+    EDIT_DRAFTS[identifier] = draft
+    return draft
+
+
+def load_saved_job(identifier):
+    """Hydrate an evicted terminal task without restarting its request."""
+    if not isinstance(identifier, str) or not identifier:
+        return None
+    with LOCK:
+        if identifier in JOBS:
+            return JOBS[identifier]
+        if isinstance(identifier, str) and re.fullmatch(r'edit_[0-9a-f]{16}', identifier):
+            storage = OUT_ROOT/'.tasks'/identifier
+        else:
+            storage = saved_directory(identifier)
+        try:
+            request = json.loads((storage/'task_request.json').read_text(encoding='utf-8'))
+            if request.get('job') in JOBS:
+                return JOBS[request['job']]
+            status = json.loads((storage/'history_status.json').read_text(encoding='utf-8'))
+            directory = Path(request['directory']).resolve()
+            if not directory.is_relative_to((ROOT/'out').resolve()):
+                return None
+            kind = request.get('kind', 'generate')
+            if kind != 'edit' and directory != storage.resolve():
+                return None
+            job = Job(request['job'], directory, state=status.get('state', 'interrupted'),
+                created=request.get('created', time.time()), kind=kind,
+                storage_dir=storage if kind == 'edit' else None,
+                target_job=request.get('target_job'))
+            job.result, job.error = status.get('result'), status.get('error')
+            job.logs, job.progress = status.get('logs', [])[-500:], status.get('progress', 0)
+            if job.state == 'running':
+                job.state, job.error = 'interrupted', '后台曾中断，可重新开始此任务。'
+                persist_job(job)
+            JOBS[job.id] = job
+            return job
+        except (OSError, ValueError, KeyError, TypeError):
+            return None
+
+
+def discard_draft(identifier):
+    EDIT_DRAFTS.pop(identifier, None)
+    if re.fullmatch(r'[0-9a-f]{32}', identifier):
+        (OUT_ROOT/'.drafts'/f'{identifier}.json').unlink(missing_ok=True)
+
+
+def perform_edit(data, operation=None):
+    from pipeline import RestyleRequest, restyle
+    job_id = data.get('job') or ''
+    draft_id = str(data.get('draft_id') or '')
+    base_version = int(data.get('base_version') or 0)
+    with LOCK:
+        original = JOBS.get(job_id)
+        draft = load_draft(draft_id)
+    directory = original.dir if original else saved_directory(job_id)
+    if not (directory/'job.json').exists():
+        raise ValueError('任务目录缺少 job.json，无法调整')
+    if draft_id and (not draft or Path(draft.get('job_dir', '')).resolve() != directory.resolve()
+                     or draft.get('base_version') != base_version):
+        raise ValueError('暂存修改已失效，请从当前版本重新开始')
+    req = RestyleRequest(base_version=base_version, anchor_row=data.get('anchor_row'),
+        anchor_rows=data.get('anchor_rows') if 'anchor_rows' in data else None,
+        line_bounds=data.get('line_bounds') or {},
+        line_texts={int(k):v for k,v in (data.get('line_texts') or {}).items()},
+        line_insertion=data.get('line_insertion'),
+        draft_insertions=copy.deepcopy(draft.get('insertions',[])) if draft else [],
+        retry_suspects=data.get('retry_suspects') is True,
+        line_offsets_ms={int(k):float(v) for k,v in (data.get('line_offsets') or {}).items()},
+        token_offsets_ms={str(k):float(v) for k,v in (data.get('token_offsets') or {}).items()},
+        overrides=data.get('options') or {}, preview_only=data.get('defer_render') is True)
+    logs = []
+    def progress(frac, message):
+        logs.append(f'[{frac*100:5.1f}%] {message}')
+        if operation:
+            operation.add(frac,message)
+    out = restyle(directory, req, progress=progress, initial_lines=copy.deepcopy(draft['lines']) if draft else None,
+                  cancel=(lambda:operation.cancel_req) if operation else None)
+    if req.preview_only:
+        lines = out.pop('_draft_lines',None)
+        if lines is None:
+            raise ValueError('暂存对齐没有返回歌词')
+        draft_id = draft_id or uuid.uuid4().hex
+        insertions = copy.deepcopy(draft.get('insertions',[])) if draft else []
+        if isinstance(data.get('line_insertion'),dict):
+            insertions.append(copy.deepcopy(data['line_insertion']))
+        value = {'job_id':job_id,'job_dir':str(directory),'base_version':base_version,
+                 'lines':lines,'insertions':insertions,'updated':time.time()}
+        with LOCK:
+            EDIT_DRAFTS[draft_id] = value
+            atomic_json(OUT_ROOT/'.drafts'/f'{draft_id}.json',{**value,'lines':[asdict(row) for row in lines]})
+        out['draft_id'] = draft_id
+    elif draft_id:
+        with LOCK:
+            discard_draft(draft_id)
+    for key in ('video','ass','srt'):
+        if out.get(key):
+            out[key] = Path(out[key]).name
+    out['logs'] = logs
+    from local_history import invalidate
+    invalidate(directory)
+    return out
 
 
 def saved_directory(identifier):
@@ -274,7 +517,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             quality=int(cfg_kwargs.get("quality", 21)),
             ass=ass,
         )
-        res = run(cfg, progress=prog, cancel=cancel, cache=_CACHE)
+        res = run(cfg, progress=prog, cancel=cancel, cache=_ensure_cache(cfg.device))
         with LOCK:
             if res.ok:
                 job.state = "done"
@@ -292,9 +535,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             job.error = f"{type(e).__name__}: {e}"
             job.logs.append(traceback.format_exc()[-1200:])
     finally:
-        (job.dir/'history_status.json').write_text(json.dumps({
-            'state':job.state, 'error':job.error, 'created':job.created,
-            'result':job.result, 'logs':job.logs}, ensure_ascii=False), encoding='utf-8')
+        persist_job(job)
 
 
 
@@ -333,7 +574,7 @@ def _audio44(job: Job, cfg_kwargs: dict, tag: str = "align",
     p = ind / "audio_44k.wav"
     with LOCK:
         job.add(frac, f"[{tag}] 抽取音频 44.1kHz 立体声…")
-    extract_wav(cfg_kwargs["media"], p, sr=44100, mono=False)
+    extract_wav(cfg_kwargs["media"], p, sr=44100, mono=False, cancel=lambda:job.cancel_req)
     return p
 
 
@@ -353,7 +594,7 @@ def _vocals_stem(job: Job, audio: Path, cfg_kwargs: dict,
     with LOCK:
         job.add(frac, f"[{tag}] 分离人声（demucs，约 30-60s）…")
     v, a = separate_stems(str(audio), vg, cfg_kwargs.get("demucs", "htdemucs_ft"),
-                          cfg_kwargs.get("device", "cuda"))
+                          cfg_kwargs.get("device", DEFAULT_DEVICE), cancel=lambda:job.cancel_req)
     return Path(v), Path(a)
 
 
@@ -362,9 +603,10 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
 
     基准：SOFA 整曲 match 模式在带长间奏/重复副歌的歌上
     不可靠，必须依赖 whisper 的行窗口。流程 = whisper 行窗口 → 每行切人声段
-    → SOFA 音素级对齐 → 字级时间替换（窗口内精修）。使用当前系统 Python。
+    → SOFA 音素级对齐 → 字级时间替换（窗口内精修）。使用当前启动环境。
     """
-    from sofa_backend import sofa_align_lyrics
+    from sofa_backend import require_japanese_language
+    from pipeline import parse_lyrics
     from asr_lyrics import AsrLine, Segment, to_enhanced_lrc, to_plain, to_srt
     from whisper_align import (cap_char_durations, clamp_tails, collapse_zeroconf,
                                enforce_timing, extend_tails,
@@ -380,9 +622,14 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
                 break
             except UnicodeDecodeError:
                 continue
-    rows = [l.strip() for l in lyrics.splitlines() if l.strip()]
+    rows = [line.text for line in parse_lyrics(lyrics).lines]
     if not rows:
         raise RuntimeError("SOFA 对齐需要歌词文本，但歌词为空")
+    # The checkpoint is multilingual, but this route's G2P is Japanese only.
+    # Resolve auto before Whisper and keep the same language in saved job data
+    # so later anchor/retry operations do not re-detect it differently.
+    cfg_kwargs["lang"] = require_japanese_language(
+        cfg_kwargs.get("lang", "auto"), "\n".join(rows))
 
     with LOCK:
         job.add(0.02, "[sofa] 歌词 {0} 行（whisper 行窗口 + SOFA 音素细化）".format(len(rows)))
@@ -439,7 +686,9 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
         # Dictionary G2P 按 word 查词典展开音素
         (seg_dir / f"{token}.lab").write_text(token, encoding="utf-8")
         dict_lines.append(f"{token}\t{' '.join(phs)}")
-        seg_meta[idx] = (st, phs, owners)
+        # TextGrid clocks start at the first actual cropped sample, including
+        # the leading pad (which may be truncated near the beginning of audio).
+        seg_meta[idx] = (a / _sr, phs, owners)
         n_cut += 1
     (seg_dir / "ja_job_dict.txt").write_text("\n".join(dict_lines), encoding="utf-8")
     with LOCK:
@@ -455,8 +704,8 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
            "--dictionary", str(jdict), "--mode", "force",
            "--out_formats", "textgrid", "--save_confidence"]
     sofa_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
-    r = subprocess.run(cmd, capture_output=True, cwd=str(ROOT / "tools/SOFA"),
-                       env=sofa_env)
+    from process_runner import run_process
+    r = run_process(cmd, cwd=str(ROOT / 'tools/SOFA'), env=sofa_env, cancel=cancel, timeout=3600)
     (seg_dir / "_infer.log").write_text(
         (r.stdout or b"").decode("utf-8", "replace") + "\n===STDERR===\n" +
         (r.stderr or b"").decode("utf-8", "replace"), encoding="utf-8")
@@ -491,7 +740,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
 
     refined: dict[int, dict] = {}
     for idx, meta in seg_meta.items():
-        st, phs, owners = meta
+        clip_start, phs, owners = meta
         tgp = seg_dir / "TextGrid" / f"line{idx:03d}.TextGrid"
         if not tgp.exists():
             rep["failed"].append(idx + 1)
@@ -538,14 +787,15 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
                 filled[ci] = (char_spans[prev][1], char_spans[prev][1] + 0.05)
             elif nxt is not None:
                 filled[ci] = (char_spans[nxt][0] - 0.05, char_spans[nxt][0])
-        refined[idx] = filled
+        refined[idx] = {ci: (clip_start + s0, clip_start + e0)
+                        for ci, (s0, e0) in filled.items()}
         rep["refined"] += 1
 
     # 最终行表：SOFA 成功的行用 SOFA 字级；失败的（含英语行）用 whisper 窗口均分兜底
     asr_lines = []
     for idx, (st, en, text) in enumerate(win):
         if idx in refined:
-            segs = [Segment(text[ci], st + s0, st + e0, 1.0)
+            segs = [Segment(text[ci], s0, e0, 1.0)
                     for ci, (s0, e0) in sorted(refined[idx].items())
                     if ci < len(text)]
         else:
@@ -606,7 +856,7 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     from whisper_align import (align_words, build_lines, cap_char_durations,
                                clamp_tails, collapse_zeroconf, enforce_timing,
                                extend_tails, get_model,
-                               merge_lines_by_confidence,
+                               merge_lines_monotonic,
                                prune_intervals_by_tx, relocate_lowconf,
                                transcribe_check, vocal_guide, vocal_intervals)
     from asr_lyrics import to_enhanced_lrc, to_plain, to_srt
@@ -644,6 +894,10 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     wlang = lang_map.get(lang)
     if wlang is None:
         wlang, _ = detect_language("\n".join(rows))
+    if lang == "ja" and not re.search(r"[\u3040-\u30ff\u3400-\u9fff]", "".join(rows)) \
+            and re.search(r"[A-Za-z]", "".join(rows)):
+        with LOCK:
+            job.add(0.02, "[whisper] ⚠ 歌词全为拉丁字母，却选择了日语对齐；英语歌词请选择 English，日语罗马音建议换成日文原文")
     with LOCK:
         job.add(0.02, f"[whisper] 歌词 {len(rows)} 行 / 语言 {wlang} / 模型 {model_size}"
                       + ("（含人声能量引导）" if use_vg else ""))
@@ -699,7 +953,8 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     evidence_primary = snapshot(asr_lines, diag['row_index'])
     evidence_alt = {}
 
-    # 两路取优：干声 + 混音各跑一次，逐行取词平均概率更高的一路（实测 +0.022 平均 p）
+    # 双路联合选择：逐行按置信度择优会在副歌重复处跳到另一轮演唱，
+    # 导致歌词行时间倒退；全局合并先保证顺序与边界连续，再比较模型置信度。
     dual_rep = None
     if use_dual and voc is not None and align_audio is voc:
         if cancel():
@@ -712,15 +967,17 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
             json.dumps(alt_words, ensure_ascii=False), encoding="utf-8")
         alt_lines, alt_diag = build_lines(alt_words, rows, rules=user_rules)
         evidence_alt = snapshot(alt_lines, alt_diag['row_index'])
-        asr_lines, dual_rep = merge_lines_by_confidence(
+        asr_lines, dual_rep = merge_lines_monotonic(
             asr_lines, diag.get("row_index") or [], alt_lines,
             alt_diag.get("row_index") or [], len(rows))
         diag["dual"] = dual_rep
+        # 后续诊断需要把每个选中对象映射回输入歌词行；双路可能漏掉不同的行。
+        diag["row_index"] = dual_rep["row_index"]
     with LOCK:
         job.add(0.30, f"[whisper] 后处理：{diag}"
-                      + (f"｜两路取优：{dual_rep['n_alt']} 行取自混音" if dual_rep else ""))
+                      + (f"｜双路合并：{dual_rep['n_alt']} 行取自混音" if dual_rep else ""))
 
-    evidence_indices = dict(zip((id(l) for l in asr_lines), sorted(set(evidence_primary) | set(evidence_alt))))
+    evidence_indices = dict(zip((id(l) for l in asr_lines), diag.get("row_index") or []))
     evidence_before = {id(l): (l.start, l.end) for l in asr_lines}
     vg_rep = None
     rl_rep = et_rep = None
@@ -835,14 +1092,18 @@ def _asr_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
 
 
 _CACHE = None
+_CACHES = {}
+_CACHE_LOCK = threading.Lock()
 
 
 def _ensure_cache(device: str = "cuda"):
     global _CACHE
-    if _CACHE is None:
+    with _CACHE_LOCK:
         from pipeline import ModelCache
-        _CACHE = ModelCache(device)
-    return _CACHE
+        if device not in _CACHES:
+            _CACHES[device] = ModelCache(device)
+        _CACHE = _CACHES[device]
+        return _CACHE
 
 
 def _ass_kwargs(o: dict) -> dict:
@@ -865,15 +1126,17 @@ def _ass_kwargs(o: dict) -> dict:
         "font_size": int(o.get("font_size") or d["font_size"]),
         "sung_color": col(o.get("sung_color"), (255, 210, 74)),
         "unsung_color": col(o.get("unsung_color"), (255, 255, 255)),
-        "outline": float(o.get("outline") or d["outline"]),
-        "margin_v": int(o.get("margin_v") or d["margin_v"]),
+        "outline": float(o.get("outline", d["outline"])),
+        "margin_v": int(o.get("margin_v", d["margin_v"])),
         "next_line": show_following,
         "line_count": line_count,
         "position_x": max(0, min(100, int(o.get('position_x', d['position_x'])))),
         "position_y": max(0, min(100, int(o.get('position_y', d['position_y'])))),
-        "lead_ms": int(o.get("lead_ms") or d["lead_ms"]),
-        "tail_ms": int(o.get("tail_ms") or d["tail_ms"]),
-        "min_gap_ms": int(o.get("min_gap_ms") or d["min_gap_ms"]),
+        "line_positions": parse_line_positions(o.get('line_positions')),
+        "lead_ms": int(o.get("lead_ms", d["lead_ms"])),
+        "tail_ms": int(o.get("tail_ms", d["tail_ms"])),
+        "min_gap_ms": int(o.get("min_gap_ms", d["min_gap_ms"])),
+        "group_same_unit": bool(o.get('group_same_unit', False)),
     }
 
 
@@ -893,6 +1156,8 @@ def _result_payload(job: Job, video, ass, srt, align_json, stats) -> dict:
         "job": job.id,
         "video": rel(video), "ass": rel(ass), "srt": rel(srt),
         "align": rel(align_json), "stats": stats,
+        "acceptance": (json.loads((job.dir / "acceptance.json").read_text(encoding="utf-8"))
+                       if (job.dir / "acceptance.json").exists() else None),
         "asr_files": asr_files, "asr_info": job.asr_info,
         "whisper_files": whisper_files, "whisper_info": job.whisper_info,
         "sofa_files": sofa_files, "sofa_info": job.sofa_info or {},
@@ -930,8 +1195,9 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length") or 0)
         if n <= 0:
             return b""
-        if n > MAX_BODY:
-            raise ValueError(f"请求体过大（{n / 1024 ** 3:.1f} GB）")
+        if n > 1 << 20:
+            self.close_connection = True
+            raise ValueError('JSON 请求体过大')
         buf = bytearray()
         left = n
         while left > 0:
@@ -947,6 +1213,9 @@ class Handler(BaseHTTPRequestHandler):
         u = urllib.parse.urlparse(self.path)
         q = urllib.parse.parse_qs(u.query)
         try:
+            from http_support import request_allowed
+            if not request_allowed(self):
+                return self._json({'error':'仅允许本地工作台访问'},403)
             if u.path.startswith('/api/concert/') or u.path.startswith('/concert-files/'):
                 from concert_web import dispatch_get
                 return dispatch_get(self, u.path, q)
@@ -959,6 +1228,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ctype + '; charset=utf-8', (ASSETS / name).read_bytes())
             if u.path == "/api/meta":
                 return self._json({
+                    "features": {"multi_anchor": True, "strict_timeline_order": True,
+                                 'async_edit': True, 'persistent_queue': True},
                     "fonts": [n for f, n in FONT_CANDIDATES if Path(f).exists()],
                     "defaults": DEFAULT_OPTIONS,
                     "demucs": ["htdemucs_ft", "htdemucs", "mdx_extra"],
@@ -968,7 +1239,7 @@ class Handler(BaseHTTPRequestHandler):
                     "rule_profiles": {p: resolve_rules(DEFAULT_RULES, profile=p)
                                       for p in ("balanced", "automatic", "legacy")},
                 })
-            if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css'):
+            if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
@@ -982,11 +1253,38 @@ class Handler(BaseHTTPRequestHandler):
                 with LOCK:
                     return self._json(sorted(
                         ({"job": j.id, "state": j.state, "created": j.created,
-                          "result": j.result} for j in JOBS.values()),
+                          "kind":j.kind, "target_job":j.target_job,
+                          "result": j.result, 'error':j.error} for j in JOBS.values()),
                         key=lambda x: -x["created"]))
             if u.path == '/api/history':
                 from local_history import scan
-                return self._json(scan(ROOT / 'out'))
+                listing = scan(ROOT / 'out')
+                with LOCK:
+                    active = {str(j.dir.resolve()):j for j in JOBS.values() if j.state in {'queued','running'}}
+                for record in listing['records']:
+                    job = active.get(str((ROOT/'out'/record['path']).resolve()))
+                    if job:
+                        record['state'],record['active_job'] = job.state,job.id
+                return self._json(listing)
+            if u.path == '/api/job':
+                job = load_saved_job(q.get('job',[''])[0])
+                if job:
+                    return self._json({'job':job.id,'state':job.state,'progress':job.progress,
+                        'lines':[], 'result':job.result,'error':job.error,'kind':job.kind,
+                        'target_job':job.target_job})
+                return self._json({'error':'任务不存在或已被清理'},404)
+            if u.path == '/api/draft':
+                identifier = q.get('draft_id', [''])[0]
+                with LOCK:
+                    draft = load_draft(identifier)
+                if not draft:
+                    return self._json({'error':'暂存修改已不存在'},404)
+                directory = saved_directory(q.get('job', [''])[0])
+                version = int(q.get('base_version', ['0'])[0])
+                if directory != Path(draft['job_dir']).resolve() or version != draft['base_version']:
+                    return self._json({'error':'暂存修改与当前记录或版本不匹配'},404)
+                return self._json({'draft_id':identifier,'base_version':version,
+                    'lines':[asdict(row) for row in draft['lines']]})
             if u.path == '/api/versions':
                 from local_history import describe
                 return self._json(describe(saved_directory(q.get('job', [''])[0]), ROOT / 'out'))
@@ -1002,6 +1300,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         try:
+            from http_support import request_allowed
+            if not request_allowed(self):
+                self.close_connection = True
+                return self._json({'error':'仅允许本地工作台发起操作'},403)
+            required = 'multipart/form-data' if u.path == '/api/run' else 'application/json'
+            if required != self.headers.get('Content-Type','').split(';',1)[0].strip().lower():
+                self.close_connection = True
+                return self._json({'error':'请求类型不正确'},415)
             if u.path.startswith('/api/concert/'):
                 from concert_web import dispatch_post
                 return dispatch_post(self, u.path)
@@ -1009,36 +1315,83 @@ class Handler(BaseHTTPRequestHandler):
                 return self._api_run()
             if u.path == "/api/rerender":
                 return self._api_rerender()
+            if u.path == "/api/draft/discard":
+                data = json.loads(self._body() or b"{}")
+                draft_id = str(data.get("draft_id") or "")
+                with LOCK:
+                    discard_draft(draft_id)
+                return self._json({"ok": True})
             if u.path == "/api/cancel":
                 d = json.loads(self._body() or b"{}")
                 with LOCK:
-                    j = JOBS.get(d.get("job", ""))
-                    if j:
+                    j = load_saved_job(d.get("job", ""))
+                    if not j:
+                        return self._json({'error':'任务不存在'},404)
+                    if j.state in {'queued','running'}:
                         j.cancel_req = True
                         j.logs.append("收到取消请求…")
-                return self._json({"ok": True})
+                        if j.state == 'queued':
+                            j.state = 'cancelled'
+                        persist_job(j)
+                return self._json({"ok": True, 'state':j.state})
+            if u.path == '/api/resume':
+                data = json.loads(self._body() or b'{}')
+                with LOCK:
+                    job = load_saved_job(data.get('job',''))
+                    if not job:
+                        return self._json({'error':'未保存可重试任务'},404)
+                    directory = job.dir.resolve()
+                    if any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
+                        return self._json({'error':'此记录已有任务在队列中'},409)
+                    if job.state not in {'interrupted','error','cancelled'}:
+                        return self._json({'error':'只有中断、失败或取消的任务可以重新开始'},409)
+                    request = json.loads(((job.storage_dir or directory)/'task_request.json').read_text(encoding='utf-8'))
+                    enqueue_job(job,request['config'])
+                return self._json({'job':job.id,'kind':job.kind,'target_job':job.target_job},202)
             if u.path == '/api/history/delete':
                 d = json.loads(self._body() or b'{}')
                 identifiers = d.get('jobs') or []
                 with LOCK:
-                    active = [j.id for j in JOBS.values() if j.state in ('queued','running')]
-                from local_history import delete
-                return self._json({'ok': True, 'removed': delete(ROOT / 'out', identifiers, OUT_ROOT, active)})
+                    active = [j.dir for j in JOBS.values() if j.state in ('queued','running')]
+                    from local_history import delete
+                    return self._json({'ok': True, 'removed': delete(ROOT / 'out', identifiers, OUT_ROOT, active)})
             return self._json({"error": "not found"}, 404)
         except BrokenPipeError:
             pass
+        except (ValueError, KeyError, TypeError) as e:
+            self.close_connection = True
+            self._json({'error':str(e)},400)
         except Exception as e:  # noqa: BLE001
             self._json({"error": f"{type(e).__name__}: {e}\n"
                                  + traceback.format_exc()[-800:]}, 500)
 
     # ---- 实现 ----------------------------------------------------------
     def _api_run(self):
+        if not UPLOAD_SLOTS.acquire(blocking=False):
+            self.close_connection = True
+            return self._json({'error':'正在接收其他媒体，请稍后重试'},429)
+        old_timeout = self.connection.gettimeout()
+        staging_root = OUT_ROOT/'.uploads'
+        staging_root.mkdir(parents=True,exist_ok=True)
+        try:
+            self.connection.settimeout(60)
+            with tempfile.TemporaryDirectory(prefix='upload-',dir=staging_root) as staging:
+                return self._api_run_inner(Path(staging))
+        finally:
+            self.connection.settimeout(old_timeout)
+            UPLOAD_SLOTS.release()
+
+    def _api_run_inner(self, staging):
         ctype = self.headers.get("Content-Type") or ""
         m = re.search(r'boundary="?([^";]+)"?', ctype)
         if "multipart/form-data" not in ctype or not m:
             return self._json({"error": "需要 multipart/form-data"}, 400)
-        body = self._body()
-        fields, files = parse_multipart(body, m.group(1).encode("latin-1"))
+        length = int(self.headers.get('Content-Length') or 0)
+        if not 0 < length <= MAX_BODY:
+            self.close_connection = True
+            return self._json({'error':'上传总大小必须在 0 到 3 GiB 之间'},413)
+        from http_support import receive_multipart
+        fields, files = receive_multipart(self.rfile,length,m.group(1).encode('latin-1'),staging)
 
         if "media" not in files:
             return self._json({"error": "请上传视频或音频文件"}, 400)
@@ -1046,22 +1399,18 @@ class Handler(BaseHTTPRequestHandler):
         job_id = time.strftime("%m%d_%H%M%S") + "_" + os.urandom(2).hex()
         jd = OUT_ROOT / job_id
         indir = jd / "in"
-        indir.mkdir(parents=True, exist_ok=True)
 
         kwargs: dict = {}
-        media = indir / safe_name(files["media"][0])
-        media.write_bytes(files["media"][1])
+        media = indir / 'media' / safe_name(files["media"][0])
         kwargs["media"] = str(media)
 
-        if "audio_track" in files and files["audio_track"][1]:
-            at = indir / safe_name(files["audio_track"][0])
-            at.write_bytes(files["audio_track"][1])
+        if "audio_track" in files and files["audio_track"][1].stat().st_size:
+            at = indir / 'audio_track' / safe_name(files["audio_track"][0])
             kwargs["audio_track"] = str(at)
 
         lyrics_text = (fields.get("lyrics_text") or "").strip()
-        if "lyrics_file" in files and files["lyrics_file"][1]:
-            lf = indir / safe_name(files["lyrics_file"][0])
-            lf.write_bytes(files["lyrics_file"][1])
+        if "lyrics_file" in files and files["lyrics_file"][1].stat().st_size:
+            lf = indir / 'lyrics' / safe_name(files["lyrics_file"][0])
             kwargs["lyrics_path"] = str(lf)
         if lyrics_text:
             kwargs["lyrics_text"] = lyrics_text
@@ -1116,26 +1465,27 @@ class Handler(BaseHTTPRequestHandler):
         for k in ("vocal_mode", "lang", "demucs", "backend", "timed_mode", "encoder"):
             if fields.get(k):
                 kwargs[k] = fields[k]
+        if kwargs.get('sofa_align') and kwargs.get('lang','auto') not in {'auto','ja'}:
+            return self._json({'error':'当前 SOFA 音素路线仅支持日语；中文/英文请使用 Whisper。'},400)
         kwargs["quality"] = int(fields.get("quality") or 21)
         kwargs["separate"] = (fields.get("separate", "1") not in ("0", "false", ""))
-        kwargs["device"] = fields.get("device") or "cuda"
+        kwargs["device"] = fields.get("device") or DEFAULT_DEVICE
         try:
             kwargs["options"] = json.loads(fields.get("options") or "{}")
         except Exception:
             kwargs["options"] = {}
 
+        for field, key in [('media','media'),('audio_track','audio_track'),('lyrics_file','lyrics_path')]:
+            if key in kwargs:
+                destination = Path(kwargs[key])
+                destination.parent.mkdir(parents=True,exist_ok=True)
+                shutil.move(str(files[field][1]),str(destination))
         job = Job(id=job_id, dir=jd)
-        with LOCK:
-            JOBS[job_id] = job
-            job.add(0.0, f"已接收：{media.name}")
-        _ensure_cache(kwargs["device"])
-        t = threading.Thread(target=_run_job, args=(job, kwargs), daemon=True)
-        t.start()
+        enqueue_job(job,kwargs)
         return self._json({"job": job_id})
 
     def _sse(self, job_id: str):
-        with LOCK:
-            job = JOBS.get(job_id)
+        job = load_saved_job(job_id)
         if job is None:
             return self._json({"error": "unknown job"}, 404)
         self.send_response(200)
@@ -1153,7 +1503,8 @@ class Handler(BaseHTTPRequestHandler):
                                "lines": new, "result": job.result, "error": job.error,
                                "asr_lrc": job.asr_lrc, "whisper_lrc": job.whisper_lrc,
                                "whisper_info": job.whisper_info}
-                    terminal = job.state in ("done", "error", "cancelled")
+                    payload['kind'],payload['target_job'] = job.kind,job.target_job
+                    terminal = job.state in ("done", "error", "cancelled", 'interrupted')
                 self.wfile.write(("data: " + json.dumps(payload, ensure_ascii=False)
                                   + "\n\n").encode("utf-8"))
                 self.wfile.flush()
@@ -1188,48 +1539,29 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(data)
 
     def _api_rerender(self):
-        from pipeline import RestyleRequest, restyle
-        d = json.loads(self._body() or b"{}")
-        job_id = d.get("job") or ""
+        data = json.loads(self._body() or b"{}")
+        job_id = data.get('job') or ''
         with LOCK:
-            job = JOBS.get(job_id)
-        jd = job.dir if job else saved_directory(job_id)
-        if not (jd / "job.json").exists():
-            return self._json({"error": "任务目录缺少 job.json，无法重渲染"}, 400)
-        with LOCK:
-            if any(j.state in ('queued','running') for j in JOBS.values()):
-                return self._json({'error':'生成任务仍在运行，请完成后再调整历史结果'},409)
-        req = RestyleRequest(
-            base_version=int(d.get('base_version') or 0),
-            anchor_row=d.get('anchor_row'),
-            line_bounds=d.get('line_bounds') or {},
-            line_insertion=d.get('line_insertion'),
-            retry_suspects=d.get('retry_suspects') is True,
-            line_offsets_ms={int(k): float(v) for k, v in
-                             (d.get("line_offsets") or {}).items()},
-            token_offsets_ms={str(k): float(v) for k, v in
-                              (d.get("token_offsets") or {}).items()},
-            overrides=d.get("options") or {},
-        )
-        logs: list[str] = []
-
-        def prog(f, m):
-            logs.append(f"[{f * 100:5.1f}%] {m}")
-
-        if not EDIT_LOCK.acquire(blocking=False):
-            return self._json({'error': '另一个调整任务仍在运行，请完成后重试'}, 409)
+            original = JOBS.get(job_id)
+            directory = original.dir if original else saved_directory(job_id)
+            if not (directory/'job.json').is_file():
+                return self._json({'error':'任务目录缺少 job.json，无法调整'},400)
+            if any(j.dir.resolve()==directory.resolve() and j.state in {'queued','running'} for j in JOBS.values()):
+                return self._json({'error':'此记录已有任务在处理'},409)
+            if data.get('async') is True:
+                identifier = 'edit_'+uuid.uuid4().hex[:16]
+                operation = Job(identifier,directory,kind='edit',
+                    storage_dir=OUT_ROOT/'.tasks'/identifier,target_job=job_id)
+                enqueue_job(operation,data)
+                return self._json({'operation_job':identifier},202)
+        # Keep the synchronous contract for older clients; use the same resource
+        # lock as generation so there is no start/edit race.
+        if not RESOURCE_LOCK.acquire(blocking=False):
+            return self._json({'error':'处理队列正在使用模型，请使用异步调整'},409)
         try:
-            out = restyle(jd, req, progress=prog)
-        except Exception as e:  # noqa: BLE001
-            return self._json({"error": f"{type(e).__name__}: {e}\n"
-                                        + traceback.format_exc()[-800:]}, 500)
+            return self._json(perform_edit(data))
         finally:
-            EDIT_LOCK.release()
-        for k in ("video", "ass", "srt"):
-            if out.get(k):
-                out[k] = Path(out[k]).name
-        out["logs"] = logs
-        return self._json(out)
+            RESOURCE_LOCK.release()
 
     def _file(self, rel: str):
         parts = [urllib.parse.unquote(x) for x in rel.split("/") if x]
@@ -1242,43 +1574,8 @@ class Handler(BaseHTTPRequestHandler):
         if not p.is_relative_to(jd) or not p.is_file():
             return self._json({"error": "not found"}, 404)
 
-        size = p.stat().st_size
-        ctype = mimetypes.guess_type(p.name)[0] or "application/octet-stream"
-        if p.suffix.lower() in (".ass", ".srt"):
-            ctype = "text/plain; charset=utf-8"
-        rng = self.headers.get("Range")
-        start, end = 0, size - 1
-        code = 200
-        if rng:
-            m = re.match(r"bytes=(\d*)-(\d*)", rng)
-            if m:
-                if m.group(1):
-                    start = int(m.group(1))
-                if m.group(2):
-                    end = int(m.group(2))
-                end = min(end, size - 1)
-                code = 206
-        length = max(0, end - start + 1)
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(length))
-        self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Cache-Control", "no-store")
-        if code == 206:
-            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
-        if "download" in (self.path or ""):
-            self.send_header("Content-Disposition",
-                             f'attachment; filename="{p.name}"')
-        self.end_headers()
-        with open(p, "rb") as f:
-            f.seek(start)
-            left = length
-            while left > 0:
-                chunk = f.read(min(1 << 20, left))
-                if not chunk:
-                    break
-                self.wfile.write(chunk)
-                left -= len(chunk)
+        from http_support import serve_file
+        return serve_file(self,p,download='download' in self.path)
 
 
 def _warmup(device: str) -> None:
@@ -1293,13 +1590,15 @@ def _warmup(device: str) -> None:
         if not MODELS_QWEN.exists():
             return
         t0 = time.time()
-        _ensure_cache(device).aligner("qwen", "zh")
+        with RESOURCE_LOCK:
+            _ensure_cache(device).aligner("qwen", "zh")
         print(f"[warmup] Qwen3-ForcedAligner 预热完成（{time.time() - t0:.1f}s）")
     except Exception as e:  # noqa: BLE001
         print(f"[warmup] 跳过：{type(e).__name__}: {e}")
 
 
 def main(argv=None) -> int:
+    global DEFAULT_DEVICE
     ap = argparse.ArgumentParser(description="lets-karaoke 本地 WebUI")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7870)
@@ -1307,8 +1606,11 @@ def main(argv=None) -> int:
     ap.add_argument("--no-warmup", action="store_true", help="跳过模型预热")
     ap.add_argument("--device", default="cuda")
     args = ap.parse_args(argv)
+    DEFAULT_DEVICE = args.device
+    STOP_WORKER.clear()
 
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
+    restore_jobs()
     if not (ASSETS / "index.html").exists():
         print(f"!! 缺少界面文件: {ASSETS / 'index.html'}")
         return 1
@@ -1327,7 +1629,22 @@ def main(argv=None) -> int:
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
-        print("\n已退出")
+        print("\n正在释放处理资源…")
+    finally:
+        STOP_WORKER.set()
+        with LOCK:
+            for job in JOBS.values():
+                if job.state == 'running':
+                    job.cancel_req = True
+                    try:
+                        persist_job(job)
+                    except OSError:
+                        pass
+        from concert_web import shutdown
+        shutdown(timeout=5)
+        if WORKER:
+            WORKER.join(timeout=5)
+        srv.server_close()
     return 0
 
 

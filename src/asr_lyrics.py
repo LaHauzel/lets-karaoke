@@ -353,7 +353,10 @@ def split_lines(
 
 def _fmt(t: float) -> str:
     t = max(0.0, t)
-    return f"{int(t // 60):02d}:{t % 60:05.2f}"
+    # Centisecond LRC timestamps collapse adjacent character boundaries when
+    # Whisper packs several characters into a very short segment. The parser
+    # accepts milliseconds, so retain that precision through the handoff.
+    return f"{int(t // 60):02d}:{t % 60:06.3f}"
 
 
 def to_enhanced_lrc(lines: list[AsrLine]) -> str:

@@ -38,8 +38,15 @@ def assess(align, expected=None, duration=None):
         if not finite or not 0 <= start < end or (duration is not None and end > duration+.05):
             issues.append({'code': 'invalid_boundary', 'severity': 'error', 'rows': [i+1], 'message': '起止无效或超出音频'})
             continue
-        if end-start < .3 or end-start > 15:
-            issues.append({'code': 'unusual_duration', 'severity': 'review', 'rows': [i+1], 'message': '句子时长异常，请试听确认'})
+        # A full lyric line that disappears within a few frames is unusable in
+        # the rendered video. Keep short interjections as review items.
+        flash = end-start < .35 and len(normalized(line.get('raw', ''))) >= 5
+        if flash or end-start < .3 or end-start > 15:
+            issues.append({'code': 'unusual_duration',
+                           'severity': 'error' if flash else 'review',
+                           'rows': [i+1],
+                           'message': ('整句歌词一闪而过，需要重新对齐' if flash
+                                       else '句子时长异常，请试听确认')})
         if i and isinstance(lines[i-1].get('end'), (int, float)) and lines[i-1]['end'] > start+.001:
             issues.append({'code': 'overlap', 'severity': 'error', 'rows': [i, i+1], 'message': '相邻句时间重叠'})
         tokens = line.get('tokens', [])
@@ -55,6 +62,11 @@ def assess(align, expected=None, duration=None):
     risk_rows = [r['row'] for r in diagnostics.get('lines', []) if r.get('reasons')]
     if risk_rows:
         issues.append({'code': 'acoustic_risk', 'severity': 'review', 'rows': risk_rows, 'message': '声学或结构依据触发复核提示'})
+    interpolated = align.get('mapping', {}).get('interpolated_zero_tokens', 0)
+    if interpolated:
+        issues.append({'code': 'interpolated_tokens', 'severity': 'review',
+                       'rows': align.get('mapping', {}).get('interpolated_rows', []),
+                       'message': f'{interpolated} 个坍缩字词只做了局部时间插值，请试听确认'})
     measured = sum(r.get('confidence') is not None for r in diagnostics.get('lines', []))
     if measured < len(lines):
         issues.append({'code': 'evidence_missing', 'severity': 'review', 'rows': [], 'message': '部分句子缺少当前版本声学依据'})
@@ -95,7 +107,7 @@ def attach_review(directory, align, persist=None):
     align['acceptance'] = assess(align, expected, duration)
     # Structural failures must also reach the per-line UI and retry selector.
     for issue in align['acceptance']['issues']:
-        if issue['code'] not in ('invalid_boundary', 'invalid_token', 'no_tokens', 'unusual_duration', 'overlap'):
+        if issue['code'] not in ('invalid_boundary', 'invalid_token', 'no_tokens', 'unusual_duration', 'overlap', 'interpolated_tokens'):
             continue
         for row in issue['rows']:
             if 0 < row <= len(align['diagnostics'].get('lines', [])):

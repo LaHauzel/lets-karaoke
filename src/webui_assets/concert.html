@@ -4,7 +4,7 @@
 <main><aside>
 <section class="card"><h2>01 / 选择视频</h2><label for="source">本地视频完整路径</label><input id="source" type="text" placeholder="D:\Videos\concert.mp4"><p class="hint">直接读取磁盘文件，无需上传。支持数小时的大视频。</p>
 <div class="row"><div><label for="minimum">最短候选片段（秒）</label><input id="minimum" type="number" min="30" max="1800" value="120"></div><div><label for="sensitivity">边界灵敏度</label><select id="sensitivity"><option value="conservative">保守 · 较少切点</option><option value="balanced" selected>均衡</option><option value="sensitive">灵敏 · 更多切点</option></select></div></div>
-<button id="analyze" class="primary">分析歌曲边界</button><button id="reanalyze" class="secondary" hidden>按当前灵敏度重新分析此记录</button><p class="hint">依据音量下降与音色结构变化找候选点，不自动识别歌名。讲话、掌声与串烧需要试听复核。</p></section>
+<button id="analyze" class="primary">分析歌曲边界</button><button id="newAnalysis" class="secondary">为当前文件建立新记录</button><button id="reanalyze" class="secondary" hidden>按当前灵敏度重新分析此记录</button><p class="hint">原视频被替换后，请建立新记录。歌曲边界依据音量和音色变化；YAMNet 结合 VAD 提示疑似讲话。橙色区间只供试听复核，不会自动剪切；喊麦、合唱或观众互动仍可能误报。</p></section>
 <section class="card"><h2>02 / 处理进度</h2><p id="status" role="status" aria-live="polite">选择视频后开始分析</p><progress id="progress" max="1" value="0"></progress><button id="cancel" hidden>取消当前处理</button><p id="error" role="alert"></p></section>
 <section class="card"><div class="heading"><h2>本地切割记录</h2><button id="refresh" class="small">刷新</button></div><div id="history" class="history">正在读取…</div></section>
 </aside><article>
@@ -13,6 +13,8 @@
 <canvas id="waveform" height="90" tabindex="0" aria-label="整场音量概览；点击定位，拖动蓝线调整边界，双击边界合并片段"></canvas><p class="hint">点击空白处定位；拖动蓝色边界调整时间；“吸附边界到当前时间”会将最近的内部切割边界精确对齐到当前播放位置；双击边界或选中后按 Delete 合并相邻片段。也可以用“在播放位置拆分”。所有操作会立即同步下方时间表。</p></section>
 <section class="card"><div class="heading"><h2>04 / 分段时间表 <span id="count"></span></h2><button id="save">保存调整</button></div>
 <p class="notice" id="notice">自动分段是待复核草稿。可修改名称与时间、取消不需要的片段，或合并误切的相邻片段。</p><div id="reviewNotes" class="hint"></div>
+<details id="speechReview" class="speechReview" hidden><summary id="speechSummary">疑似讲话区间</summary><p class="hint">分类模型以约 1 秒音频窗判断讲话/音乐特征，定位仍需人工试听；下方分数不是演唱会场景的校准概率。请试听后再调整边界。</p><div id="speechRanges"></div></details>
+<style>.speechReview{margin:10px 0 14px;padding:10px 12px;border:1px solid #d2992255;border-radius:8px;background:#d299220c}.speechReview summary{cursor:pointer;color:#e3b341}.speechRangeItem{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:7px 0;border-top:1px solid #ffffff12}.speechRangeItem button,.speechCut{font-size:11px;padding:4px 8px}.speechFlag{display:block;margin-top:4px;color:#e3b341;font-size:10px}.speechOverlay{color:#e3b341}</style>
 <div class="tablewrap"><table><thead><tr><th>导出</th><th>片段名称</th><th>开始</th><th>结束</th><th>操作</th></tr></thead><tbody id="segments"><tr><td colspan="5" class="empty">分析完成后，候选分段会显示在这里</td></tr></tbody></table></div>
 <div class="exportbar"><select id="mode" aria-label="导出方式"><option value="copy">快速导出 · 保持原编码（MKV）</option><option value="precise">精确切割 · 重新编码（MP4）</option></select><button id="export" class="primary">导出选中片段</button><a id="manifest" hidden>下载时间表</a></div><p id="modeHelp" class="hint">快速模式不重新压缩，速度快；受视频关键帧限制，开头可能包含切点前的画面。精确模式耗时较长。</p>
 <div id="downloads"></div></section>

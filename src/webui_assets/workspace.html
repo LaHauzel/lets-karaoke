@@ -9,5 +9,25 @@
 <script>
 function selectTab(name){for(const n of ['karaoke','concert']){const on=n===name,b=document.getElementById('tab-'+n),p=document.getElementById('panel-'+n);b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1;p.hidden=!on;if(on&&!p.getAttribute('src'))p.src='/'+n;}history.replaceState(null,'','#'+name);}
 for(const n of ['karaoke','concert']){const b=document.getElementById('tab-'+n);b.onclick=()=>selectTab(n);b.onkeydown=e=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(e.key)){e.preventDefault();const target=e.key==='Home'?'karaoke':e.key==='End'?'concert':n==='karaoke'?'concert':'karaoke';selectTab(target);document.getElementById('tab-'+target).focus();}};}
+const karaokeFrame=document.getElementById('panel-karaoke'),concertFrame=document.getElementById('panel-concert');
+let karaokeReady=false,pendingImport=null;
+function dispatchImport(){
+  if(!pendingImport)return;
+  if(!karaokeReady){karaokeFrame.contentWindow?.postMessage({type:'lets-karaoke:ping'},location.origin);return;}
+  karaokeFrame.contentWindow.postMessage(pendingImport,location.origin);
+  pendingImport=null;
+}
+window.addEventListener('message',event=>{
+  if(event.origin!==location.origin)return;
+  if(event.source===karaokeFrame.contentWindow&&event.data?.type==='lets-karaoke:ready'){
+    karaokeReady=true;dispatchImport();return;
+  }
+  if(event.source!==concertFrame.contentWindow||event.data?.type!=='lets-karaoke:import-concert-media')return;
+  const url=new URL(event.data.url||'',location.origin);
+  if(url.origin!==location.origin||!/^\/concert-files\/[a-zA-Z0-9_-]+\/export-[a-f0-9]+\/[^/]+$/.test(url.pathname))return;
+  pendingImport={type:'lets-karaoke:import-concert-media',url:url.pathname,name:String(event.data.name||'').slice(0,180),size:Number(event.data.size)||0};
+  selectTab('karaoke');dispatchImport();
+});
+karaokeFrame.addEventListener('load',()=>{karaokeReady=false;karaokeFrame.contentWindow.postMessage({type:'lets-karaoke:ping'},location.origin);});
 selectTab(location.hash==='#concert'?'concert':'karaoke');
 </script></body></html>

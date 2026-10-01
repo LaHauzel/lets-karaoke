@@ -15,7 +15,7 @@ echo.
 echo   [1] Install Whisper subtitle environment
 echo       Known-lyrics alignment, subtitle rendering, optional vocal separation
 echo   [2] Install concert segmentation minimum environment
-echo       Long-video analysis, waveform editing, and FFmpeg export; no GPU/models
+echo       Long-video analysis, waveform editing, and FFmpeg export; CPU-only, ~15 MB classifier
 echo   [3] Install Qwen full subtitle environment
 echo       Whisper plus Qwen ForcedAligner, ASR drafts, and Wav2Vec2
 echo   [4] Install SOFA singing alignment environment
@@ -85,8 +85,9 @@ if /i "%~1"=="whisper" (
   echo           and optional Demucs vocal separation.
 ) else if /i "%~1"=="concert" (
   echo [Concert segmentation minimum environment]
-  echo Function: long-video audio analysis, interactive boundaries, and FFmpeg export.
-  echo           This profile does not install CUDA, Whisper, Qwen, SOFA, or models.
+  echo Function: long-video audio analysis, speech/music review markers, interactive boundaries,
+  echo           and FFmpeg export. Installs a small CPU-only YAMNet classifier (~15 MB).
+  echo           No CUDA, Whisper, Qwen, SOFA, or large models are required.
 ) else if /i "%~1"=="qwen" (
   echo [Qwen full subtitle environment]
   echo Function: Whisper subtitle tools plus Qwen ForcedAligner, ASR drafts,
@@ -168,6 +169,7 @@ python src\fetch_models.py --list
 echo.
 if exist "models\whisper\large-v3.pt" (echo [OK] Whisper large-v3: models\whisper\large-v3.pt) else (echo [--] Whisper large-v3: not downloaded)
 if exist "models\sofa\multilingual\pretrained_multilingual_singing\v1.0.0_multilingual_singing.ckpt" (echo [OK] SOFA checkpoint found.) else (echo [--] SOFA checkpoint: place it under models\sofa\multilingual\pretrained_multilingual_singing\)
+python src\fetch_concert_model.py --status
 echo.
 pause
 exit /b

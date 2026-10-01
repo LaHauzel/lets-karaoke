@@ -11,26 +11,33 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 ## Features
 
 - Word- and character-level alignment for supplied lyrics with Whisper/stable-ts.
-- Batch processing for multiple video/audio files or an entire folder; select each queue item to assign its own lyrics and subtitle style, with a separate history record for every input.
+- Batch processing for multiple video/audio files or an entire folder; select each queue item to assign its own lyrics, alignment language, and subtitle style, with a separate history record for every input.
 - ASR draft generation when no lyric file is available, followed by manual correction and re-alignment.
+- Optional Qwen/Wav2Vec2 acoustic alignment. The current SOFA phoneme refinement route supports Japanese only; use Whisper for other languages.
 - Alignment diagnostics, low-confidence markers, anchor editing, version history, and fast re-rendering.
+- Structural acceptance checks flag missing lyrics, lines that flash past, and invalid word timings; batch results summarize items needing correction or review.
+- Per-line subtitle positioning, adjustable line count, fonts, sizes, and highlight colors, with a live preview on any frame of the selected video.
 - Enhanced LRC, SRT, and ASS output, with optional FFmpeg subtitle burn-in.
-- Acoustic boundary suggestions for long concert videos based on volume dips and spectral changes.
+- Acoustic boundary suggestions for long concert videos based on volume dips and spectral changes, with YAMNet and WebRTC VAD speech/music review markers. Markers never cut media automatically and may still flag singing or crowd interaction.
 - Interactive waveform and time-table editing: seek, drag boundaries, snap the nearest boundary to the current time, split at the playhead, merge adjacent segments, and edit timestamps.
 - Multiple sensitivity versions per concert record, with batch export to MKV or MP4.
+- Import an exported concert segment into the karaoke subtitle workspace with one click.
 - One local backend service shared by the two independent WebUI tabs.
+- Generation and timeline edits share a durable processing queue, with progress recovery after page reload, automatic recovery of pending jobs after restart, explicit retries for interrupted jobs, cancellable edits, and local draft storage.
+- Concert export records completed clips incrementally and can resume remaining clips after cancellation or interruption.
 
 ## Limitations
 
-- Concert segmentation is an acoustic heuristic. It does not identify song titles, transcribe lyrics, or classify speech, applause, and music. A candidate boundary is not a song count or probability.
+- Concert boundaries use volume and timbre heuristics, with YAMNet/WebRTC VAD speech review markers. Song titles are not recognized. Candidate counts are not song counts; classifier scores are not calibrated concert probabilities.
 - Applause, stage talk, continuous accompaniment, pauses inside a song, and medleys can produce false or missed boundaries. Listen to each boundary before exporting.
 - Fast export copies the original streams and writes MKV. Keyframe placement can cause a clip to start slightly before the requested time. Use precise export when exact cuts are required; it re-encodes and takes longer.
 - Browser preview depends on the source codec. A file that cannot be previewed in the browser may still be analyzable and exportable through FFmpeg.
+- Vocal energy can help bound a sung passage, but crowd noise, quiet vocals, and separation errors make it unreliable as a substitute for matching the lyrics to the voice. Acceptance checks and model confidence are not accuracy estimates; review uncertain lines by listening.
 
 ## Requirements
 
 - Windows 11 (the primary validation environment).
-- Python 3.11 or later.
+- Python 3.11.x, 64-bit (the tested installer target; other versions are outside the supported installation profile).
 - FFmpeg and FFprobe available on `PATH`.
 - Sufficient disk space for dependencies, model caches, and exports. Model weights are not included in this repository.
 
@@ -42,7 +49,14 @@ python src\check_environment.py
 
 ## Installation
 
-Use the system-default Python 3.11. The batch scripts install into and run the `python` executable resolved from the current shell; they do not create a virtual environment or depend on ComfyUI.
+By default, batch scripts install into the Python 3.11 executable resolved from the current shell. An isolated environment is also available and does not depend on ComfyUI:
+
+```bat
+setup_venv.bat whisper
+webui_venv.bat
+```
+
+Replace `whisper` with `concert`, `qwen`, `sofa`, or `full` as needed. The environment lives in `.venv/`; use `.venv\Scripts\python.exe` for model downloads when using this option.
 
 ```bat
 git clone https://github.com/LaHauzel/lets-karaoke.git
@@ -62,12 +76,12 @@ For an interactive Windows setup flow, run `setup_guide.bat`. It presents these 
 | Option | Profile | Use case | GPU/models |
 | --- | --- | --- | --- |
 | 1 | Whisper subtitles | Known-lyrics alignment, subtitle rendering, optional separation | GPU; Whisper model |
-| 2 | Concert segmentation minimum | Long-video analysis, waveform editing, FFmpeg segment export | No GPU or models |
+| 2 | Concert segmentation minimum | Long-video analysis, speech/music review markers, waveform editing, FFmpeg segment export | CPU; 15.4 MiB YAMNet |
 | 3 | Qwen full subtitles | Whisper plus Qwen alignment, ASR drafts, and Wav2Vec2 | GPU; Whisper/Qwen models |
 | 4 | SOFA singing alignment | Whisper line windows and SOFA phoneme-level alignment | GPU; Whisper/SOFA checkpoint |
-| 5 | Full environment | All subtitle backends and concert segmentation | GPU; download models as needed |
+| 5 | Full environment | All subtitle backends and concert segmentation | GPU; subtitle models as needed, small YAMNet classifier |
 
-See [Windows setup and troubleshooting](docs/SETUP_WINDOWS.en.md). If you only need concert segmentation, choose option 2 instead of installing the full environment.
+See [Windows setup and troubleshooting](docs/SETUP_WINDOWS.en.md). If you only need concert segmentation, choose option 2 instead of installing the full environment. Project scope, remaining gaps, and comparisons are documented in the Chinese [project review](docs/PROJECT_REVIEW.md) and [competitive analysis](docs/COMPETITIVE_ANALYSIS.md).
 
 Download the local models when needed:
 
@@ -77,7 +91,14 @@ python src\fetch_models.py --list
 python src\fetch_models.py
 ```
 
-The Whisper checkpoint is stored under `models/whisper`. The ForcedAligner model is required for Qwen supplied-lyrics alignment; the ASR model is needed for lyric drafts without a lyric file. The SOFA checkpoint must currently be placed at `models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt`. Model sources and names are defined in `src/fetch_models.py`.
+The Whisper checkpoint is stored under `models/whisper`. The concert profile downloads a small YAMNet audio classifier for speech-versus-music review markers. It runs on the CPU and never changes cut boundaries automatically. Check or retry its download with:
+
+```bat
+python src\fetch_concert_model.py --status
+python src\fetch_concert_model.py
+```
+
+The ForcedAligner model is required for Qwen supplied-lyrics alignment; the ASR model is needed for lyric drafts without a lyric file. The SOFA checkpoint must currently be placed at `models/sofa/multilingual/pretrained_multilingual_singing/v1.0.0_multilingual_singing.ckpt`. Model sources and names are defined in `src/fetch_models.py`.
 
 ## Start the WebUI
 
@@ -140,6 +161,8 @@ The source video is never modified. Cancelling an export removes unfinished clip
 - Concert records include the source path, analysis parameters, segment table, and export metadata. Review and remove `out/` before sharing a project directory.
 
 ## Tests
+
+For GPU synthetic checks on a fresh clone, first run `python src\gen_synth.py --tts sapi` with local Chinese, English, and Japanese SAPI voices installed. Audio files are excluded from Git. Integration success requires full text coverage, valid subtitle structure, nonempty outputs, and a default synthetic token start P90 budget of 250ms; see the [validation matrix](docs/VALIDATION.md).
 
 The test suite uses repository-generated synthetic audio and video and does not read personal media:
 

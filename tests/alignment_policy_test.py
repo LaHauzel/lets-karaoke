@@ -6,7 +6,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from alignment_policy import bounded_refine, project_timeline, resolve_rules
 from asr_lyrics import AsrLine, Segment
-from whisper_align import DEFAULT_RULES, postprocess_lines, merge_lines_monotonic
+from whisper_align import (DEFAULT_RULES, merge_lines_by_confidence,
+                           merge_lines_monotonic, postprocess_lines)
 
 
 def line(start, end, prob=.9):
@@ -23,10 +24,21 @@ class PolicyTests(unittest.TestCase):
     def test_joint_selection_avoids_crossing_between_choruses(self):
         first = [line(10, 12, .9), line(13, 15, .6)]
         other = [line(30, 32, .99), line(13, 15, .7)]
+        confidence_only, _ = merge_lines_by_confidence(first, [0,1], other, [0,1], 2)
+        self.assertGreater(confidence_only[0].start, confidence_only[1].start)
         merged, report = merge_lines_monotonic(first, [0,1], other, [0,1], 2)
         self.assertEqual(merged[0].start, 10)
         self.assertEqual(merged[1].prob, .7)
         self.assertEqual(report['unavoidable_reversals'], 0)
+        self.assertEqual(report['row_index'], [0, 1])
+
+    def test_joint_selection_preserves_input_rows_when_a_route_misses_lines(self):
+        first = [line(10, 12), line(30, 32)]
+        other = [line(20, 22)]
+        merged, report = merge_lines_monotonic(first, [0, 2], other, [1], 3)
+        self.assertEqual(report['row_index'], [0, 1, 2])
+        self.assertEqual(len(merged), 3)
+        self.assertEqual(merged[1].start, 20)
 
     def test_held_note_preserved(self):
         lines = [line(1, 8), line(10, 11)]

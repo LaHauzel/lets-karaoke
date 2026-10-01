@@ -1,4 +1,4 @@
-"""SOFA（Singing-Oriented Forced Aligner）后端：歌词文本 → 字级时间轴。
+r"""SOFA（Singing-Oriented Forced Aligner）后端：歌词文本 → 字级时间轴。
 
 通用对齐流程：
   歌词文本 → pykakasi(漢字→假名) → 音素序列（模型词表形式：ma→m a、し→sh i、
@@ -6,7 +6,7 @@
   → SOFA(Dictionary G2P, 整曲 match 模式) → TextGrid 音素时间
   → 音素名两指针匹配 → 音素 → 原文字符聚合 → 字级 (char, start, end, conf)
 
-SOFA 推理使用当前系统 Python，通过子进程调用。
+SOFA 推理使用当前启动环境的 Python，通过子进程调用。
 检查点/词典统一放 models\sofa\ja\（随项目迁移）。
 
 已知近似：多摩拉漢字（一字多音）的字内音素分配按假名长度比例，
@@ -15,17 +15,29 @@ SOFA 推理使用当前系统 Python，通过子进程调用。
 from __future__ import annotations
 
 import csv
+import os
 import re
 import shutil
-import subprocess
 import sys
 from pathlib import Path
+
+from process_runner import run_process
 
 ROOT = Path(__file__).resolve().parents[1]
 SOFA_DIR = ROOT / "tools" / "SOFA"
 SOFA_PY = Path(sys.executable)
 CKPT = ROOT / "models" / "sofa" / "ja" / "jpn_test2_plus.ckpt"
 JA_DICT = ROOT / "models" / "sofa" / "ja" / "japanese-extension-sofa.txt"
+
+
+def require_japanese_language(language: str, text: str = "") -> str:
+    """The multilingual checkpoint currently uses a Japanese-only G2P here."""
+    if language == "auto":
+        from pipeline import detect_language
+        language, _ = detect_language(text)
+    if language != "ja":
+        raise ValueError("SOFA 当前只支持日语歌词；请选择日语（ja），中文或英语请使用 Whisper 对齐")
+    return language
 
 # ---------------------------------------------------------------- G2P ----
 # 日语 mora → 模型词表音素（multilingual/JA 检查点的声母/韵母形式）
@@ -36,7 +48,6 @@ _ROWS = [
     ("n", "なにぬねの"), ("h", "はひふへほ"), ("m", "まみむめも"),
     ("r", "らりるれろ"), ("g", "がぎぐげご"), ("z", "ざじずぜぞ"),
     ("d", "だぢづでど"), ("b", "ばびぶべぼ"), ("p", "ぱぴぷぺぽ"),
-    ("v", "ヴぁヴぃヴぅヴぇヴぉ"),
 ]
 for _c, _row in _ROWS:
     for _v, _ch in zip(_VOW, _row):
@@ -49,6 +60,12 @@ for _c, _row in _ROWS:
             _MORA[_ch + _s] = (_c, "y", _sv)     # きゃ → k y a
 # 特殊假名覆盖（模型词表形式：し=sh i、つ=c u 等）
 _MORA.update({
+    "あ": ("a",), "い": ("i",), "う": ("u",), "え": ("e",), "お": ("o",),
+    "ぁ": ("a",), "ぃ": ("i",), "ぅ": ("u",), "ぇ": ("e",), "ぉ": ("o",),
+    "や": ("y", "a"), "ゆ": ("y", "u"), "よ": ("y", "o"),
+    "わ": ("w", "a"), "ゐ": ("i",), "ゑ": ("e",), "を": ("o",),
+    "ゔ": ("v", "u"), "ゔぁ": ("v", "a"), "ゔぃ": ("v", "i"),
+    "ゔぇ": ("v", "e"), "ゔぉ": ("v", "o"),
     "し": ("sh", "i"), "しゃ": ("sh", "a"), "しゅ": ("sh", "u"), "しょ": ("sh", "o"),
     "ち": ("ch", "i"), "ちゃ": ("ch", "a"), "ちゅ": ("ch", "u"), "ちょ": ("ch", "o"),
     "じ": ("j", "i"), "じゃ": ("j", "a"), "じゅ": ("j", "u"), "じょ": ("j", "o"),
@@ -74,45 +91,41 @@ def to_phonemes(text: str) -> tuple[list[str], list[int]]:
     import pykakasi
 
     kk = pykakasi.kakasi()
-    conv = kk.getConverter()
     phonemes: list[str] = []
     owners: list[int] = []
+    moras: list[tuple[int, tuple[str, ...] | None]] = []
     offset = 0                        # piece 的 orig 在整行文本中的起点
-    for piece in conv.convert(text):
+    for piece in kk.convert(text):
         orig, kana = piece["orig"], piece["kana"]
-        # piece 内：假名 → 音素组（记录假名位置；None=促音占位）
-        pm: list[tuple[int, tuple[str, ...] | None]] = []
         i = 0
         while i < len(kana):
             two = kana[i:i + 2]
             one = kana[i]
+            ci = offset + _char_index(orig, kana, i)
             if two in _MORA and len(two) == 2:
-                pm.append((i, _MORA[two])); i += 2
+                moras.append((ci, _MORA[two])); i += 2
             elif one in _MORA:
-                pm.append((i, _MORA[one])); i += 1
-            elif one == "ー" and pm:
-                pm.append((i, (pm[-1][1][-1],))); i += 1
+                moras.append((ci, _MORA[one])); i += 1
+            elif one in ("っ", "ッ"):
+                moras.append((ci, None)); i += 1
+            elif one == "ー":
+                previous = next((phs for _, phs in reversed(moras) if phs), None)
+                if previous and previous[-1] in _VOW:
+                    moras.append((ci, (previous[-1],)))
+                i += 1
             else:
                 i += 1
-        # 促音倍化：'っ' 后紧跟 mora 的首个辅音重复一次（kka → k k a）
-        fixed: list[tuple[int, tuple[str, ...]]] = []
-        for kpos, phs in pm:
-            if phs is None:
-                fixed.append((kpos, None))
-            elif fixed and fixed[-1][1] is None:
-                fixed[-1] = (fixed[-1][0], (phs[0],) + phs)
-                fixed.append((kpos, phs))
-            else:
-                fixed.append((kpos, phs))
-        # 输出音素 + 原字符归属
-        for kpos, phs in fixed:
-            if phs is None:
-                continue
-            ci = offset + _char_index(orig, kana, kpos)
-            for ph in phs:
-                phonemes.append(ph)
-                owners.append(ci)
         offset += len(orig)
+    # A sokuon owns only the extra consonant, not an extra copy of the whole
+    # following mora. Keep it across pykakasi piece boundaries as well.
+    for i, (ci, phs) in enumerate(moras):
+        if phs is None:
+            following = next((p for _, p in moras[i + 1:] if p), None)
+            if not following or following[0] in _VOW:
+                continue
+            phs = (following[0],)
+        phonemes.extend(phs)
+        owners.extend([ci] * len(phs))
     return phonemes, owners
 
 
@@ -166,12 +179,14 @@ def _load_conf(work_dir: Path) -> dict[str, str]:
 
 # ---------------------------------------------------------------- 主入口 ----
 def sofa_align_lyrics(vocals_wav: str, lyrics_lines: list[str], work_dir: Path,
-                      progress=None, mode: str = "match") -> list[dict]:
-    """整曲 SOFA 对齐 → 逐行字级时间。
+                      progress=None, mode: str = "match", cancel=None,
+                      language: str = "ja") -> list[dict]:
+    """整曲 SOFA 日语对齐 → 逐行字级时间。
 
     返回 [{text, start, end, chars: [{ch, start, end, conf}], moras_hit,
     moras_total}]；`vocals_wav` 应为 44.1k 人声干声（demucs stem）。
     """
+    require_japanese_language(language, "\n".join(lyrics_lines))
     avail, why = is_available()
     if not avail:
         raise RuntimeError("SOFA 环境不可用：" + why)
@@ -220,7 +235,8 @@ def sofa_align_lyrics(vocals_wav: str, lyrics_lines: list[str], work_dir: Path,
            "--g2p", "Dictionary", "--dictionary", str(job_dict),
            "--mode", mode, "--out_formats", "textgrid", "--save_confidence"]
     sofa_env = {**os.environ, "PYTHONUTF8": "1", "PYTHONIOENCODING": "utf-8"}
-    r = subprocess.run(cmd, capture_output=True, cwd=str(SOFA_DIR), env=sofa_env)
+    r = run_process(cmd, cwd=str(SOFA_DIR), env=sofa_env,
+                    cancel=cancel, timeout=6 * 3600)
     log = ((r.stdout or b"") + b"\n===STDERR===\n" +
            (r.stderr or b"")).decode("utf-8", "replace")
     (work_dir / "_infer.log").write_text(log, encoding="utf-8")

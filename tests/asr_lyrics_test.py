@@ -117,6 +117,16 @@ d2 = P.parse_lyrics(r2.lrc)
 check(all((b - a) > 0 for l in d2.lines for _, a, b in (l.word_times or [])),
       "零长单元在 LRC 里也是正时长")
 
+# Several Japanese characters can land within one centisecond. Serializing at
+# two decimal places used to collapse their boundaries before the pipeline.
+fine = A.AsrLine("あいう", 1.001, 1.010, [
+    A.Segment("あ", 1.001, 1.004), A.Segment("い", 1.004, 1.007),
+    A.Segment("う", 1.007, 1.010)], 0.8)
+fine_doc = P.parse_lyrics(A.to_enhanced_lrc([fine]))
+check(len(fine_doc.lines[0].word_times or []) == 3 and
+      all(b > a for _, a, b in fine_doc.lines[0].word_times),
+      "毫秒级相邻字词的边界不会在增强 LRC 中坍缩")
+
 print()
 sane = [A.Segment("[笑]", 1.0, 1.4), A.Segment("ok", 1.5, 1.9)]
 r3 = A.build_lyrics("English", "[笑]ok", sane, 2.0)

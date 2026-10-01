@@ -32,7 +32,7 @@ def attach(align, evidence):
     old=evidence.get('lines',[]);new=align.get('lines',[])
     norm=lambda s: ''.join(s.split())
     edited=bool(align.get('base_version')) or any(v for v in align.get('offsets',{}).values()) or any(v for v in align.get('token_offsets',{}).values())
-    edited = edited or align.get('anchor_row') is not None
+    edited = edited or align.get('anchor_row') is not None or bool(align.get('anchor_rows'))
     valid=not edited and len(old)==len(new) and all(norm(a.get('text',''))==norm(b.get('raw','')) and
         abs(a['start']-b['start'])<.04 and abs(a['end']-b['end'])<.04 for a,b in zip(old,new))
     edited = edited or bool(align.get('line_bounds'))

@@ -29,14 +29,16 @@ from __future__ import annotations
 
 import argparse
 import bisect
+import copy
 import difflib
 import json
 import math
 import os
 import re
 import shutil
-import subprocess
 import sys
+import threading
+import tempfile
 import time
 import unicodedata
 from dataclasses import dataclass, field, asdict
@@ -51,13 +53,14 @@ if str(_HERE) not in sys.path:
 import numpy as np  # noqa: E402
 
 import model_paths  # noqa: E402,F401  （设定 TORCH_HOME/HF_HOME，须在模型加载前）
+from process_runner import ProcessCancelled, run_process  # noqa: E402
 
 from p0_common import (  # noqa: E402
     LANGS, SR, TokenSpan, load_audio_16k, probe_duration, tokenize, write_wav,
 )
 from ass_builder import (  # noqa: E402
     AssOptions, KaraokeLine, KaraokeToken, build_ass, build_srt, check_windows,
-    solve_windows,
+    parse_line_positions, solve_windows,
 )
 
 ROOT = _HERE.parent
@@ -72,8 +75,7 @@ def _noop_progress(frac: float, msg: str) -> None:  # pragma: no cover
     print(f"[{frac * 100:5.1f}%] {msg}", flush=True)
 
 
-class Cancelled(RuntimeError):
-    pass
+Cancelled = ProcessCancelled
 
 
 # ==========================================================================
@@ -109,6 +111,7 @@ _LRC_WORD = re.compile(
     r"<(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?)(?:~(\d{1,3}):(\d{1,2}(?:[.:]\d{1,3})?))?>"
 )
 _LRC_META = re.compile(r"^\[(ti|ar|al|by|offset|re|ve|length|kana):", re.I)
+_LRC_OFFSET = re.compile(r"^\s*\[offset\s*:\s*([+-]?\d+)\]\s*$", re.I | re.M)
 _SRT_TIME = re.compile(
     r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
     r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})"
@@ -151,9 +154,13 @@ def parse_lyrics(raw: str) -> LyricDoc:
     # --- LRC / 增强 LRC --------------------------------------------------
     if _LRC_TIME.search(raw):
         doc = LyricDoc(timed=True)
+        offsets = _LRC_OFFSET.findall(raw)
+        # LRC positive offset means lyrics should appear earlier (hurry),
+        # so subtract it from both line and enhanced-word timestamps.
+        offset = int(offsets[-1]) / 1000 if offsets else 0.0
         entries: list[tuple[float, str, list[tuple[str, float, float]] | None]] = []
         for ln in raw.split("\n"):
-            if _LRC_META.match(ln):
+            if _LRC_META.match(ln.lstrip()):
                 continue
             stamps = list(_LRC_TIME.finditer(ln))
             if not stamps:
@@ -183,8 +190,13 @@ def parse_lyrics(raw: str) -> LyricDoc:
             body = _strip_section(body)
             if not body:
                 continue
+            first_stamp = _to_sec(stamps[0].group(1), stamps[0].group(2))
             for sm in stamps:
-                entries.append((_to_sec(sm.group(1), sm.group(2)), body, words))
+                stamp = _to_sec(sm.group(1), sm.group(2))
+                shift = stamp - first_stamp - offset
+                shifted = ([(text, max(0.0, start + shift), max(0.0, end + shift))
+                            for text, start, end in words] if words else None)
+                entries.append((max(0.0, stamp - offset), body, shifted))
         entries.sort(key=lambda e: e[0])
         for i, (t, body, words) in enumerate(entries):
             end = entries[i + 1][0] if i + 1 < len(entries) else None
@@ -503,6 +515,43 @@ def _fill_and_monotonic(spans: list[TokenSpan | None], tokens: list[str],
     return out
 
 
+def _repair_zero_line_tokens(line: KaraokeLine, minimum: float = 0.001) -> int:
+    """Borrow a few milliseconds locally when mapped character times collapse.
+
+    This only changes a zero-width run and its immediate neighbours. A large
+    gap is not treated as available singing time: such a row remains invalid
+    for the acceptance check and must be reviewed against the audio.
+    """
+    tokens = line.tokens
+    repaired = 0
+    i = 0
+    while i < len(tokens):
+        if tokens[i].end - tokens[i].start >= minimum / 2:
+            i += 1
+            continue
+        j = i + 1
+        while j < len(tokens) and tokens[j].end - tokens[j].start < minimum / 2:
+            j += 1
+        left, right = max(0, i - 1), min(len(tokens) - 1, j)
+        window = tokens[left:right + 1]
+        lo, hi = window[0].start, window[-1].end
+        original = [max(0.0, t.end - t.start) for t in window]
+        # Do not spread a short collapsed word through instrumental silence.
+        if hi - lo >= minimum * len(window) and hi - lo <= sum(original) + .1:
+            weights = [max(minimum, value) for value in original]
+            total = sum(weights)
+            widths = [(hi - lo) * weight / total for weight in weights]
+            if min(widths) >= .0008:
+                position = lo
+                for token, width in zip(window, widths):
+                    token.start, token.end = position, position + width
+                    position = token.end
+                window[-1].end = hi
+                repaired += j - i
+        i = j
+    return repaired
+
+
 # ==========================================================================
 # 时间规整（timed lyrics）
 # ==========================================================================
@@ -542,10 +591,10 @@ def make_warp(anchors: Iterable[tuple[float, float]]):
 # ==========================================================================
 
 
-def probe_media(path: str | Path) -> dict:
+def probe_media(path: str | Path, cancel: CancelFn | None = None) -> dict:
     cmd = ["ffprobe", "-v", "error", "-print_format", "json",
            "-show_format", "-show_streams", str(path)]
-    r = subprocess.run(cmd, capture_output=True, check=True)
+    r = run_process(cmd, check=True, cancel=cancel, timeout=30)
     info = json.loads(r.stdout.decode("utf-8", "replace"))
     out = {"duration": 0.0, "has_video": False, "has_audio": False,
            "width": 0, "height": 0, "fps": 0.0, "vcodec": "", "acodec": ""}
@@ -572,19 +621,28 @@ def probe_media(path: str | Path) -> dict:
 
 
 def extract_wav(src: str | Path, dst: str | Path, sr: int = SR,
-                mono: bool = True) -> str:
+                mono: bool = True, cancel: CancelFn | None = None) -> str:
     """任何音/视频 -> PCM16 WAV。"""
-    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+    destination = Path(dst).resolve()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f'.{destination.stem}_', suffix=destination.suffix,
+                                     dir=destination.parent, delete=False) as pending:
+        temporary = Path(pending.name)
     cmd = ["ffmpeg", "-y", "-nostdin", "-v", "error", "-i", str(src)]
     if mono:
         cmd += ["-ac", "1"]
-    cmd += ["-ar", str(sr), "-vn", "-c:a", "pcm_s16le", str(dst)]
-    subprocess.run(cmd, capture_output=True, check=True)
+    cmd += ["-ar", str(sr), "-vn", "-c:a", "pcm_s16le", str(temporary)]
+    try:
+        run_process(cmd, check=True, cancel=cancel, timeout=1800)
+        temporary.replace(destination)
+    except BaseException:
+        temporary.unlink(missing_ok=True)
+        raise
     return str(dst)
 
 
 def separate_stems(src_audio: str | Path, out_dir: Path, model: str = "htdemucs_ft",
-                   device: str = "cuda") -> tuple[str, str]:
+                   device: str = "cuda", cancel: CancelFn | None = None) -> tuple[str, str]:
     """跑 Demucs 两轨分离，返回 (vocals, accompaniment) 的 WAV 路径。
 
     用官方 CLI（python -m demucs.separate）而不是手搓 apply_model：
@@ -600,7 +658,11 @@ def separate_stems(src_audio: str | Path, out_dir: Path, model: str = "htdemucs_
            "-d", device, "-o", str(tmp), str(src_audio)]
     env = dict(os.environ)
     env["PYTHONPATH"] = ""
-    r = subprocess.run(cmd, capture_output=True, env=env, cwd=str(out_dir))
+    try:
+        r = run_process(cmd, env=env, cwd=str(out_dir), cancel=cancel, timeout=6 * 3600)
+    except BaseException:
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
     stem_dir = tmp / model / Path(src_audio).stem
     voc, acc = stem_dir / "vocals.wav", stem_dir / "no_vocals.wav"
     if r.returncode != 0 or not voc.exists() or not acc.exists():
@@ -625,7 +687,7 @@ def _enc_args(encoder: str, quality: int) -> list[str]:
 def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path,
                  audio_track: str | None, media_info: dict,
                  encoder: str = "auto", quality: int = 21,
-                 audio_copy_ok: bool = False) -> str:
+                 audio_copy_ok: bool = False, cancel: CancelFn | None = None) -> str:
     """把 ASS 烧进画面。cwd 设在字幕所在目录，避免 Windows 盘符冒号在
     filtergraph 里的转义地狱（ass=xxx：':' 和 '\\' 都要转义）。
 
@@ -638,6 +700,9 @@ def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path
         audio_track = str(Path(audio_track).resolve())
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix=f'.{out_path.stem}_', suffix=out_path.suffix,
+                                     dir=out_path.parent, delete=False) as pending:
+        temporary = Path(pending.name)
 
     enc = encoder
     if enc == "auto":
@@ -666,18 +731,23 @@ def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path
             c += ["-c:a", "copy"]
         else:
             c += ["-c:a", "aac", "-b:a", "256k"]
-        c += ["-movflags", "+faststart", str(out_path)]
+        c += ["-movflags", "+faststart", str(temporary)]
         return c
 
     tries = [enc] + ([("x264" if enc != "x264" else "nvenc")] if encoder == "auto" else [])
     last = ""
     for e in tries:
         cmd = base(e)
-        r = subprocess.run(cmd, capture_output=True, cwd=str(ass_dir))
-        if r.returncode == 0 and out_path.exists() and out_path.stat().st_size > 0:
+        try:
+            r = run_process(cmd, cwd=str(ass_dir), cancel=cancel, timeout=6 * 3600)
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+        if r.returncode == 0 and temporary.exists() and temporary.stat().st_size > 0:
+            temporary.replace(out_path)
             return e
         last = (r.stderr or b"").decode("utf-8", "replace")[-1200:]
-        out_path.unlink(missing_ok=True)
+        temporary.unlink(missing_ok=True)
     raise RuntimeError(f"渲染失败:\n{last}")
 
 
@@ -693,21 +763,25 @@ class ModelCache:
         self.device = device
         self._aligners: dict[str, object] = {}
         self._asr: dict[str, object] = {}
+        self._load_lock = threading.Lock()
 
     def aligner(self, backend: str, lang: str):
-        key = f"{backend}:{lang}"
-        if key not in self._aligners:
-            from align_backends import QwenAligner, Wav2Vec2Aligner
-            if backend == "qwen":
-                self._aligners[key] = QwenAligner(
-                    model_dir=str(MODELS_QWEN) if MODELS_QWEN.exists() else None,
-                    device=self.device)
-            else:
-                name = LANGS[lang].wav2vec2_model
-                if not name:
-                    raise RuntimeError(f"wav2vec2 后端不支持语言 {lang}")
-                self._aligners[key] = Wav2Vec2Aligner(
-                    name, device=self.device, cache_dir=str(ROOT / "models" / "hf"))
+        if backend not in ("qwen", "wav2vec2"):
+            raise ValueError(f"未知对齐后端: {backend}")
+        key = "qwen" if backend == "qwen" else f"{backend}:{lang}"
+        with self._load_lock:
+            if key not in self._aligners:
+                from align_backends import QwenAligner, Wav2Vec2Aligner
+                if backend == "qwen":
+                    self._aligners[key] = QwenAligner(
+                        model_dir=str(MODELS_QWEN) if MODELS_QWEN.exists() else None,
+                        device=self.device)
+                else:
+                    name = LANGS[lang].wav2vec2_model
+                    if not name:
+                        raise RuntimeError(f"wav2vec2 后端不支持语言 {lang}")
+                    self._aligners[key] = Wav2Vec2Aligner(
+                        name, device=self.device, cache_dir=str(ROOT / "models" / "hf"))
         return self._aligners[key]
 
     def asr(self, language: str | None = None):
@@ -717,15 +791,23 @@ class ModelCache:
         实测不指定语言会把日文歌误判成英文并大量幻觉，所以这个参数必须传。
         """
         key = f"asr:{language or 'auto'}"
-        if key not in self._asr:
-            from asr_lyrics import LocalAsr, qwen_language
-
-            self._asr[key] = LocalAsr(
-                asr_dir=MODELS_ASR if MODELS_ASR.exists() else None,
-                aligner_dir=MODELS_QWEN if MODELS_QWEN.exists() else None,
-                device=self.device,
-                language=qwen_language(language),
-            )
+        with self._load_lock:
+            if key not in self._asr:
+                from asr_lyrics import LocalAsr, qwen_language
+                if self._asr:
+                    # Language is a transcribe argument on LocalAsr, not a
+                    # different set of weights. Keep separate small wrappers
+                    # for context/language while sharing the loaded GPU model.
+                    wrapper = copy.copy(next(iter(self._asr.values())))
+                    wrapper.language = qwen_language(language)
+                    self._asr[key] = wrapper
+                else:
+                    self._asr[key] = LocalAsr(
+                        asr_dir=MODELS_ASR if MODELS_ASR.exists() else None,
+                        aligner_dir=MODELS_QWEN if MODELS_QWEN.exists() else None,
+                        device=self.device,
+                        language=qwen_language(language),
+                    )
         return self._asr[key]
 
 
@@ -818,7 +900,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
 
         step(0.02, "探测媒体信息")
-        info = probe_media(cfg.media)
+        info = probe_media(cfg.media, cancel=cancel)
         if not info["has_audio"]:
             raise RuntimeError("输入文件没有音轨，无法对齐")
         src_for_audio = cfg.audio_track or cfg.media
@@ -852,7 +934,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         if cfg.audio_track:
             full_wav = job_dir / "source_audio.wav"
             step(0.10, "抽取用户提供的独立音轨")
-            extract_wav(cfg.audio_track, full_wav, sr=44100, mono=False)
+            extract_wav(cfg.audio_track, full_wav, sr=44100, mono=False, cancel=cancel)
         else:
             pre44 = next((p for p in (job_dir / "in" / "audio_44k.wav",
                                       job_dir / "in" / "whisper_44k.wav",
@@ -862,17 +944,19 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 step(0.10, f"复用预对齐阶段抽取的音轨（{pre44.name}）")
             else:
                 step(0.10, "抽取原始音轨（44.1kHz 立体声）")
-                extract_wav(cfg.media, full_wav, sr=44100, mono=False)
+                extract_wav(cfg.media, full_wav, sr=44100, mono=False, cancel=cancel)
 
         sep_src = str(full_wav)
-        do_sep = cfg.separate and not cfg.audio_track
+        # A trusted word-timed LRC already supplies all alignment boundaries.
+        # Separation only helps this path when the final audio removes vocals.
+        do_sep = cfg.separate and not cfg.audio_track and (not doc.word_timed or cfg.vocal_mode == 'remove')
         # 预对齐阶段已经分离过一次（in/vg/）→ 复用它，别再跑一遍 demucs
         pre_voc, pre_acc = job_dir / "in" / "vg" / "vocals.wav", \
             job_dir / "in" / "vg" / "accompaniment.wav"
         reuse = do_sep and pre_voc.exists() and pre_acc.exists()
         if cfg.audio_track:
             step(0.12, "已提供独立音轨，跳过人声分离")
-        elif not cfg.separate:
+        elif not do_sep:
             step(0.12, "按要求跳过人声分离，对齐直接跑在原始混音上")
         elif reuse:
             step(0.12, "复用预对齐阶段分离好的人声/伴奏（跳过重复分离）")
@@ -883,7 +967,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             align_src = voc
         elif do_sep:
             step(0.14, f"人声分离中（{cfg.demucs_model}，首次运行较慢）")
-            voc, acc = separate_stems(full_wav, job_dir, cfg.demucs_model, cfg.device)
+            voc, acc = separate_stems(full_wav, job_dir, cfg.demucs_model, cfg.device, cancel=cancel)
             res.vocals, res.accompaniment = voc, acc
             align_src = voc
         else:
@@ -892,8 +976,8 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         # 对齐用的 16k 单声道
         align_16k = job_dir / "align_input.wav"
         step(0.42, "准备 16kHz 单声道对齐输入")
-        extract_wav(align_src, align_16k, sr=SR, mono=True)
-        audio = load_audio_16k(align_16k)
+        extract_wav(align_src, align_16k, sr=SR, mono=True, cancel=cancel)
+        audio = load_audio_16k(align_16k, cancel=cancel)
         audio_dur = len(audio) / SR
         step(0.45, f"对齐音频 {audio_dur:.2f}s（来自 {Path(align_src).name}）")
 
@@ -959,6 +1043,13 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 start=ktoks[0].start, end=ktoks[-1].end))
             origin.append(i)
 
+        repairs = [_repair_zero_line_tokens(line) for line in lines]
+        repaired_tokens = sum(repairs)
+        if repaired_tokens:
+            diag["interpolated_zero_tokens"] = repaired_tokens
+            diag["interpolated_rows"] = [i + 1 for i, count in enumerate(repairs) if count]
+            step(0.83, f"对 {repaired_tokens} 个坍缩字词做局部毫秒插值；相关行仍需试听")
+
         # ---------------------------------------------------------- 5 warp
         warp_info = {"applied": False}
         if doc.timed and cfg.timed_mode == "warp" and not used_word_times:
@@ -1009,6 +1100,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 "unsung_color": list(opt.unsung_color),
                 "next_line": opt.next_line, "line_count": opt.line_count,
                 "position_x": opt.position_x, "position_y": opt.position_y,
+                "line_positions": [list(p) for p in opt.line_positions] if opt.line_positions else None,
                 "lead_ms": opt.lead_ms,
                 "tail_ms": opt.tail_ms, "min_gap_ms": opt.min_gap_ms,
                 "group_same_unit": opt.group_same_unit,
@@ -1051,6 +1143,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             "out_audio": str(Path(out_audio).resolve()) if out_audio else None,
             "align_source": str(Path(align_src).resolve()),
             "lang": lang,
+            "device": cfg.device,
             "encoder_choice": cfg.encoder, "quality": cfg.quality,
             "options": {
                 "font": opt.font, "font_size": opt.font_size,
@@ -1059,6 +1152,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                 "outline": opt.outline, "margin_v": opt.margin_v,
                 "next_line": opt.next_line, "line_count": opt.line_count,
                 "position_x": opt.position_x, "position_y": opt.position_y,
+                "line_positions": [list(p) for p in opt.line_positions] if opt.line_positions else None,
                 "lead_ms": opt.lead_ms,
                 "tail_ms": opt.tail_ms, "min_gap_ms": opt.min_gap_ms,
                 "group_same_unit": opt.group_same_unit,
@@ -1069,7 +1163,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         out_video = job_dir / f"{_safe(job)}_karaoke.mp4"
         step(0.93, "烧录字幕并合成成片")
         used_enc = render_video(cfg.media, ass_path.name, job_dir, out_video,
-                               out_audio, info, cfg.encoder, cfg.quality, acopy)
+                               out_audio, info, cfg.encoder, cfg.quality, acopy, cancel=cancel)
         res.video = str(out_video)
         res.ok = True
         res.stats = {
@@ -1118,9 +1212,13 @@ class RestyleRequest:
     overrides: dict = field(default_factory=dict)
     base_version: int = 0   # 0=原始；正整数=在已渲染版本上继续修改
     anchor_row: int | None = None
+    anchor_rows: list[int] | None = None
     line_bounds: dict = field(default_factory=dict)  # row -> absolute start/end seconds
+    line_texts: dict[int, str] = field(default_factory=dict)  # row -> replacement lyric
     line_insertion: dict | None = None
+    draft_insertions: list[dict] = field(default_factory=list)
     retry_suspects: bool = False
+    preview_only: bool = False
 
 
 def _ass_opt_from(opts: dict) -> AssOptions:
@@ -1143,14 +1241,15 @@ def _ass_opt_from(opts: dict) -> AssOptions:
         sung_color=col(opts.get("sung_color"), base.sung_color),
         unsung_color=col(opts.get("unsung_color"), base.unsung_color),
         outline=float(opts.get("outline", base.outline)),
-        margin_v=int(opts.get("margin_v") or base.margin_v),
+        margin_v=int(opts.get("margin_v", base.margin_v)),
         next_line=show_following,
         line_count=line_count,
         position_x=max(0, min(100, int(opts.get('position_x', base.position_x)))),
         position_y=max(0, min(100, int(opts.get('position_y', base.position_y)))),
-        lead_ms=int(opts.get("lead_ms") or base.lead_ms),
-        tail_ms=int(opts.get("tail_ms") or base.tail_ms),
-        min_gap_ms=int(opts.get("min_gap_ms") or base.min_gap_ms),
+        line_positions=parse_line_positions(opts.get('line_positions')),
+        lead_ms=int(opts.get("lead_ms", base.lead_ms)),
+        tail_ms=int(opts.get("tail_ms", base.tail_ms)),
+        min_gap_ms=int(opts.get("min_gap_ms", base.min_gap_ms)),
         group_same_unit=bool(opts.get("group_same_unit", base.group_same_unit)),
     )
 
@@ -1164,6 +1263,10 @@ def load_job(job_dir: str | Path, version: int = 0) -> tuple[dict, list[KaraokeL
     aj = json.loads((jd / (f"align_v{version}.json" if version else "align.json")).read_text(encoding="utf-8"))
     if version:
         job['options'] = {**(job.get('options') or {}), **(aj.get('options') or {})}
+        job['lang'] = aj.get('lang', job.get('lang'))
+        if aj.get('audio_mode') == 'original':
+            job['out_audio'] = None
+        job['encoder_choice'] = aj.get('encoder', job.get('encoder_choice', 'auto'))
     lines: list[KaraokeLine] = []
     for ln in aj["lines"]:
         toks = [KaraokeToken(text=t["text"], disp=t["disp"], unit=t.get("unit"),
@@ -1196,21 +1299,85 @@ def _insert_manual_line(text: str, start: float, end: float, lang: str) -> Karao
     return KaraokeLine(raw=text, head=head, tokens=tokens, start=start, end=end)
 
 
+def _replace_line_text(line: KaraokeLine, text: str, lang: str) -> None:
+    """Replace a lyric row while keeping its time range and relative token rhythm."""
+    text = text.strip()
+    if not text:
+        raise ValueError('歌词不能为空')
+    values = tokenize(text, LANGS.get(lang) or LANGS['ja'])
+    if not values:
+        raise ValueError('歌词没有可对齐的字词')
+    if not math.isfinite(line.start) or not math.isfinite(line.end) or line.end <= line.start:
+        raise ValueError('当前歌词行的时间范围无效，无法替换歌词')
+
+    head, displays = build_display(text, values)
+    old = line.tokens
+    old_weights = [max(0.001, token.end - token.start) for token in old]
+    if not old_weights:
+        old_weights = [1.0]
+    weights = []
+    for i in range(len(values)):
+        position = (i + 0.5) * len(old_weights) / len(values) - 0.5
+        position = max(0.0, min(len(old_weights) - 1.0, position))
+        left = int(position)
+        right = min(len(old_weights) - 1, left + 1)
+        fraction = position - left
+        weights.append(old_weights[left] * (1.0 - fraction) + old_weights[right] * fraction)
+
+    span = line.end - line.start
+    total = sum(weights)
+    cursor = line.start
+    tokens = []
+    for i, (value, weight) in enumerate(zip(values, weights)):
+        end = line.end if i == len(values) - 1 else cursor + span * weight / total
+        tokens.append(KaraokeToken(value, displays[i], cursor, end))
+        cursor = end
+    line.raw = text
+    line.head = head
+    line.tokens = tokens
+
+
 def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
-            progress: ProgressFn | None = None) -> dict:
+            progress: ProgressFn | None = None,
+            initial_lines: list[KaraokeLine] | None = None,
+            cancel: CancelFn | None = None) -> dict:
     """在既有对齐结果上应用人工微调并重新出片。
 
     只做「重建 ASS + 重跑 ffmpeg」，不加载任何模型 —— 秒级完成，
     因此适合在 WebUI 里反复试听微调。
     """
-    prog = progress or _noop_progress
+    callback = progress or _noop_progress
+    def prog(frac, message):
+        if cancel and cancel():
+            raise Cancelled("用户已取消")
+        callback(frac, message)
     req = req or RestyleRequest()
     jd = Path(job_dir)
     job, lines = load_job(jd, req.base_version)
+    if initial_lines is not None:
+        if not isinstance(initial_lines, list) or any(not isinstance(line, KaraokeLine) for line in initial_lines):
+            raise ValueError('暂存歌词数据无效，请重新开始插入')
+        lines = copy.deepcopy(initial_lines)
+    if req.anchor_rows is None:
+        anchor_rows = [] if req.anchor_row is None else [req.anchor_row]
+    else:
+        if not isinstance(req.anchor_rows, (list, tuple)):
+            raise ValueError('锚点列表无效')
+        anchor_rows = list(req.anchor_rows)
+    if any(isinstance(row, bool) or not isinstance(row, int) for row in anchor_rows):
+        raise ValueError('锚点行号无效')
+    if anchor_rows != sorted(set(anchor_rows)):
+        raise ValueError('锚点必须按歌词顺序选择，且不能重复')
+    if any(row < 0 or row >= len(lines) for row in anchor_rows):
+        raise ValueError('锚点行号超出歌词范围')
+    has_anchors = bool(anchor_rows)
+    if has_anchors or (req.line_insertion or {}).get('mode') == 'auto':
+        job['alignment_config'] = (json.loads((jd/'retry_config.json').read_text(encoding='utf-8'))
+                                   if (jd/'retry_config.json').exists() else {})
     retry_evidence = None
     retry_report = None
     if req.retry_suspects:
-        if req.anchor_row is not None or req.line_insertion or req.line_bounds or req.line_offsets_ms or req.token_offsets_ms:
+        if has_anchors or req.line_insertion or req.line_bounds or req.line_offsets_ms or req.token_offsets_ms:
             raise ValueError('请先保存或撤销手动调整，再单独运行疑难句重试')
         from alignment_review import attach_review
         from alignment_retry import retry_lines
@@ -1224,13 +1391,25 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         refined, retry_evidence, retry_report = retry_lines(acoustic, evidence,
             [jd/'in/vg/vocals.wav',jd/'in/audio_44k.wav',Path(job['media'])],
             float(job['media_info']['duration']), {'ja':'Japanese','zh':'Chinese','en':'English'}.get(job.get('lang'),job.get('lang')),
-            model=retry_config.get('model','large-v3'),device=retry_config.get('device','cuda'),progress=prog)
+            model=retry_config.get('model','large-v3'),device=retry_config.get('device','cuda'),progress=prog,
+            cancel=cancel or (lambda: False))
         if not retry_report['accepted']:
             return {'ok':True,'unchanged':True,'retry':retry_report}
         for i,(old,new) in enumerate(zip(acoustic,refined)):
             if old is not new:
                 lines[i] = KaraokeLine(raw=new.text,start=new.start,end=new.end,
                     tokens=[KaraokeToken(text=t.text,disp=t.text,start=t.start,end=t.end) for t in new.segments])
+
+    for key, text in req.line_texts.items():
+        try:
+            index = int(key)
+        except (TypeError, ValueError) as exc:
+            raise ValueError('无效歌词行号') from exc
+        if not 0 <= index < len(lines):
+            raise ValueError('无效歌词行号')
+        if not isinstance(text, str):
+            raise ValueError(f'第 {index+1} 句歌词格式无效')
+        _replace_line_text(lines[index], text, job.get('lang', 'ja'))
 
     prog(0.05, "载入对齐结果")
     for i, ln in enumerate(lines):
@@ -1245,9 +1424,10 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
                     dd = req.token_offsets_ms[key] / 1000.0
                     t.start += dd
                     t.end += dd
+
     # 逐 token 调整后可能逆序，重新整理
     for i, ln in enumerate(lines):
-        if (req.anchor_row is not None or req.retry_suspects) and not req.line_offsets_ms.get(i, req.line_offsets_ms.get(str(i), 0)) and not any(
+        if (has_anchors or req.retry_suspects) and not req.line_offsets_ms.get(i, req.line_offsets_ms.get(str(i), 0)) and not any(
                 req.token_offsets_ms.get(f'{i}:{j}', req.token_offsets_ms.get(f'{i}_{j}', 0)) for j in range(len(ln.tokens))):
             continue  # Human-anchor runs must preserve unchanged prefix timings exactly.
         prev = -1e9
@@ -1297,16 +1477,39 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
             newline = _insert_manual_line(text, lines[after].end, min(lines[after].end+.1, float(job['media_info']['duration'])), job.get('lang','ja'))
             lines.insert(after+1, newline)
             from anchor_realign import realign_suffix
-            lines = realign_suffix(job, lines, after, prog)
+            lines = realign_suffix(job, lines, after, prog, **({'cancel':cancel} if cancel else {}))
         else:
             raise ValueError('新增歌词定位方式无效')
 
-    if req.anchor_row is not None and not insertion:
+    if has_anchors and not insertion:
         from anchor_realign import realign_suffix
-        lines = realign_suffix(job, lines, req.anchor_row, prog)
+        lines = realign_suffix(job, lines, anchor_rows if len(anchor_rows) > 1 else anchor_rows[0], prog,
+                               **({'cancel':cancel} if cancel else {}))
+
+    # Never persist a render whose lyric rows run backwards. This catches
+    # manual timestamp edits that bypass or lose an anchor request, before a
+    # misleading version is written to history.
+    for i in range(1, len(lines)):
+        if lines[i].start < lines[i - 1].start - 0.001:
+            raise ValueError(
+                f'时间轴倒退：第 {i+1} 句起点 {lines[i].start:.2f}s 早于第 {i} 句起点 '
+                f'{lines[i-1].start:.2f}s。请检查起止时间，或为第 {i} 句设置锚点后重新对齐后续。')
     opt = _ass_opt_from({**(job.get("options") or {}), **req.overrides})
     solve_windows(lines, opt)
     health = check_windows(lines, opt.min_gap_ms)
+
+    if req.preview_only:
+        serialized_lines = [{
+            "raw": ln.raw, "start": round(ln.start, 4), "end": round(ln.end, 4),
+            "ev_start": round(ln.ev_start, 4), "ev_end": round(ln.ev_end, 4),
+            "head": ln.head,
+            "tokens": [{"text": t.text, "disp": t.disp, "unit": t.unit,
+                        "start": round(t.start, 4), "end": round(t.end, 4)}
+                       for t in ln.tokens],
+        } for ln in lines]
+        return {"ok": True, "preview": True, "lines": serialized_lines,
+                "health": health, "anchor_rows": anchor_rows,
+                "_draft_lines": copy.deepcopy(lines)}
 
     ver = 1
     while (jd / f"karaoke_v{ver}.ass").exists():
@@ -1327,18 +1530,24 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
     used_enc = render_video(job["media"], ass_path.name, jd, out_video,
                            out_audio, info,
                            job.get("encoder_choice", "auto"),
-                           int(job.get("quality", 21)), acopy)
+                           int(job.get("quality", 21)), acopy, cancel=cancel)
     prog(1.0, f"完成：{out_video.name}")
 
     (jd / f"align_v{ver}.json").write_text(json.dumps({
         "version": ver,
         "base_version": req.base_version,
-        "anchor_row": req.anchor_row,
+        "lang": job.get('lang'),
+        "audio_mode": "original" if out_audio is None else "separated",
+        "encoder": used_enc,
+        "anchor_row": anchor_rows[0] if len(anchor_rows) == 1 else None,
+        "anchor_rows": anchor_rows,
         "line_bounds": req.line_bounds,
+        "line_texts": req.line_texts,
         "line_insertion": req.line_insertion,
+        "line_insertions": req.draft_insertions,
         "review_evidence": retry_evidence,
         "retry": retry_report,
-        "operation": 'local_retry' if req.retry_suspects else (("insert_" + str(req.line_insertion.get('mode'))) if req.line_insertion else ("anchor_realign" if req.anchor_row is not None else "retime")),
+        "operation": 'local_retry' if req.retry_suspects else ('insert_deferred' if req.draft_insertions else ('lyric_edit' if req.line_texts else (("insert_" + str(req.line_insertion.get('mode'))) if req.line_insertion else ("anchor_realign" if has_anchors else "retime")))),
         "created": time.time(),
         "health": health,
         "offsets": {str(k): v for k, v in req.line_offsets_ms.items()},
@@ -1359,7 +1568,8 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
                   jd/f'acceptance_v{ver}.json')
     return {"ok": True, "version": ver, "video": str(out_video),
             "ass": str(ass_path), "srt": str(srt_path), "health": health,
-            "encoder": used_enc}
+            "encoder": used_enc, "anchor_rows": anchor_rows,
+            "operation": 'anchor_realign' if has_anchors else 'retime'}
 
 
 # ==========================================================================

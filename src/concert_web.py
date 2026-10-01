@@ -2,22 +2,40 @@
 from __future__ import annotations
 import copy
 import json
-import mimetypes
+import importlib.util
 import re
 import shutil
 import threading
 import time
 import uuid
+import zipfile
 from pathlib import Path
-from urllib.parse import unquote, urlparse, quote
+from urllib.parse import unquote, urlparse, parse_qs
 
-from concert_splitter import Cancelled, probe, extract_features, suggest, validate_segments, export_segments
+from concert_splitter import (Cancelled, probe, extract_features, extract_sound_scores,
+                              suggest, validate_segments, export_segments, verify_source,
+                              cancel_running_processes)
+from http_support import request_allowed, serve_file as send_media_file
 
 ROOT = Path(__file__).resolve().parents[1] / 'out' / 'concert'
 LOCK = threading.RLock()
 JOBS = {}
 ACTIVE = set()
 CANCEL = set()
+
+
+def shutdown(timeout=5):
+    """Cancel workers and reap their media processes before closing the server."""
+    with LOCK:
+        CANCEL.update(ACTIVE)
+    cancel_running_processes()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        with LOCK:
+            if not ACTIVE:
+                return True
+        time.sleep(.05)
+    return False
 
 
 def directory(identifier):
@@ -27,26 +45,68 @@ def directory(identifier):
 
 
 def persist(job):
-    dest = directory(job['id']) / 'concert.json'
-    temp = dest.with_suffix('.tmp')
-    temp.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding='utf-8')
-    temp.replace(dest)
+    with LOCK:
+        dest = directory(job['id']) / 'concert.json'
+        temp = dest.with_name(f'concert-{uuid.uuid4().hex}.tmp')
+        try:
+            temp.write_text(json.dumps(job, ensure_ascii=False, indent=2), encoding='utf-8')
+            temp.replace(dest)
+        finally:
+            temp.unlink(missing_ok=True)
 
 
 def get_job(identifier):
     with LOCK:
-        if identifier not in JOBS:
-            path = directory(identifier) / 'concert.json'
-            if not path.exists():
-                raise FileNotFoundError('任务不存在')
-            job = json.loads(path.read_text(encoding='utf-8'))
-            if job['state'] in {'analyzing', 'exporting'}:
-                job.update(state='interrupted', message='服务曾中断；可恢复已保存的分段或重新分析。')
-            JOBS[identifier] = job
-        job = JOBS[identifier]
-        if job.get('merged_into') and job['merged_into'] != identifier:
-            return get_job(job['merged_into'])
-        return job
+        seen = set()
+        while True:
+            directory(identifier)
+            if identifier in seen:
+                raise ValueError('任务记录引用循环，请恢复备份')
+            seen.add(identifier)
+            if identifier in JOBS:
+                job = JOBS[identifier]
+            else:
+                path = directory(identifier) / 'concert.json'
+                if not path.exists():
+                    raise FileNotFoundError('任务不存在')
+                job = json.loads(path.read_text(encoding='utf-8'))
+                if job.get('edited'):
+                    current = next((v for v in job.get('analysis_versions', [])
+                                    if v.get('version') == job.get('analysis_version')), None)
+                    if current is not None and current.get('segments') != job.get('segments'):
+                        # Older releases saved edits only in the root record.
+                        current.update(segments=copy.deepcopy(job.get('segments', [])), edited=True,
+                                       revision=int(job.get('revision', 0)))
+                if job['state'] in {'analyzing', 'exporting'} and identifier not in ACTIVE:
+                    job.update(state='interrupted', message='服务曾中断；可继续未完成导出或重新分析。')
+                    for export in job.get('exports', []):
+                        if export.get('state') == 'exporting':
+                            export['state'] = 'interrupted'
+                JOBS[identifier] = job
+            target = job.get('merged_into')
+            if not target or target == identifier:
+                return job
+            identifier = target
+
+
+def active_ids(identifier):
+    canonical = get_job(identifier)['id']
+    return {value for value in ACTIVE if get_job(value)['id'] == canonical}
+
+
+def export_directory(job, export):
+    owner = export.get('owner_id')
+    if not owner and export.get('path'):
+        legacy = Path(export['path']).resolve()
+        if legacy.is_relative_to(ROOT.resolve()) and legacy.name == export['id']:
+            owner = legacy.parent.name
+    owner = owner or job['id']
+    if get_job(owner)['id'] != job['id'] or not re.fullmatch(r'export-[a-f0-9]+', export['id']):
+        raise ValueError('无效导出文件归属')
+    folder = directory(owner) / export['id']
+    if not folder.resolve().is_relative_to(ROOT.resolve()):
+        raise ValueError('导出目录超出工作区')
+    return folder
 
 
 def snapshot(identifier):
@@ -61,6 +121,26 @@ def update(identifier, **values):
         persist(job)
 
 
+def start_worker(identifier, target, args):
+    with LOCK:
+        ACTIVE.add(identifier)
+        try:
+            threading.Thread(target=target, args=args, daemon=True).start()
+        except BaseException as exc:
+            ACTIVE.discard(identifier)
+            CANCEL.discard(identifier)
+            job = get_job(identifier)
+            job.update(state='error', message=f'无法启动后台处理：{exc}')
+            for export in job.get('exports', []):
+                if export.get('state') == 'exporting':
+                    export['state'] = 'error'
+            try:
+                persist(job)
+            except OSError:
+                pass
+            raise
+
+
 def version_payload(job, number=None):
     return {
         'version': number if number is not None else job.get('analysis_version', 1),
@@ -70,8 +150,11 @@ def version_payload(job, number=None):
         'candidates': copy.deepcopy(job.get('candidates', [])),
         'segments': copy.deepcopy(job.get('segments', [])),
         'waveform': copy.deepcopy(job.get('waveform', [])),
+        'speech_ranges': copy.deepcopy(job.get('speech_ranges', [])),
         'method': job.get('method'),
         'notice': job.get('notice'),
+        'source_identity': copy.deepcopy(job.get('source_identity')),
+        'edited': bool(job.get('edited')), 'revision': int(job.get('revision', 0)),
     }
 
 
@@ -87,15 +170,31 @@ def append_version(job):
 
 def migrate_legacy_records():
     """Coalesce older re-analysis jobs made before versioned records existed."""
+    with LOCK:
+        return _migrate_legacy_records_locked()
+
+
+def _migrate_legacy_records_locked():
     ROOT.mkdir(parents=True, exist_ok=True)
+    active_canonical = {get_job(identifier)['id'] for identifier in ACTIVE}
     groups = {}
     for path in ROOT.glob('*/concert.json'):
         try:
-            raw = json.loads(path.read_text(encoding='utf-8'))
-            groups.setdefault(str(Path(raw.get('source', '')).resolve()), []).append(raw)
+            raw = copy.deepcopy(JOBS.get(path.parent.name) or json.loads(path.read_text(encoding='utf-8')))
+            if raw.get('state') in {'analyzing', 'exporting'} and raw.get('id') not in ACTIVE:
+                raw.update(state='interrupted', message='服务曾中断；可继续未完成导出或重新分析。')
+                for export in raw.get('exports', []):
+                    if export.get('state') == 'exporting':
+                        export['state'] = 'interrupted'
+            identity = json.dumps(raw.get('source_identity'), sort_keys=True)
+            groups.setdefault((str(Path(raw.get('source', '')).resolve()).casefold(), identity), []).append(raw)
         except (OSError, ValueError, TypeError):
             continue
     for _, all_records in groups.items():
+        # Never change identity/storage of a live worker, including aliases.
+        if any(r.get('id') in ACTIVE or r.get('id') in active_canonical or
+               r.get('merged_into') in active_canonical for r in all_records):
+            continue
         bases = [r for r in all_records if not r.get('merged_into')]
         if len(bases) < 2:
             continue
@@ -115,18 +214,32 @@ def migrate_legacy_records():
             records.sort(key=lambda x: (float(x.get('created', 0)), x.get('id', '')))
             versions = []
             version_counter = 0
-        exports = list(canonical.get('exports') or [])
+        exports = []
+        version_maps = {}
+        for raw in all_records:
+            for value in raw.get('exports') or []:
+                value = copy.deepcopy(value)
+                if not value.get('owner_id'):
+                    legacy = Path(value.get('path') or '').resolve()
+                    value['owner_id'] = (legacy.parent.name if legacy.is_relative_to(ROOT.resolve())
+                                         and legacy.name == value.get('id') else raw['id'])
+                exports.append(value)
         for raw in records[1:] if canonical.get('legacy_versions_migrated') else records:
-            old_versions = raw.get('analysis_versions') or [version_payload(raw, 1)]
+            old_versions = copy.deepcopy(raw.get('analysis_versions') or [version_payload(raw, 1)])
+            if raw.get('edited'):
+                for value in old_versions:
+                    if value.get('version') == raw.get('analysis_version'):
+                        value.update(segments=copy.deepcopy(raw.get('segments', [])), edited=True,
+                                     revision=int(raw.get('revision', 0)))
             for value in old_versions:
                 version_counter += 1
                 value = copy.deepcopy(value)
+                version_maps.setdefault(raw['id'], {})[value.get('version', 1)] = version_counter
                 value['version'] = version_counter
                 versions.append(value)
-            exports.extend(raw.get('exports') or [])
             if float(raw.get('created', 0)) >= float(canonical.get('created', 0)):
                 for key in ('state', 'progress', 'message', 'min_length', 'sensitivity', 'candidates',
-                            'segments', 'waveform', 'method', 'notice', 'updated'):
+                            'segments', 'waveform', 'speech_ranges', 'method', 'notice', 'updated'):
                     if key in raw:
                         canonical[key] = raw[key]
         dedup = {}
@@ -139,6 +252,10 @@ def migrate_legacy_records():
         if canonical.get('state') in {'ready', 'done'}:
             canonical['message'] = f'已完成分析版本 v{canonical["analysis_version"]}，可在版本菜单中切换。'
         seen = set()
+        for value in exports:
+            mapping = version_maps.get(value.get('owner_id'), {})
+            if value.get('version') in mapping:
+                value['version'] = mapping[value['version']]
         canonical['exports'] = [x for x in exports if not (x.get('id') in seen or seen.add(x.get('id')))]
         JOBS[canonical['id']] = canonical
         persist(canonical)
@@ -163,28 +280,123 @@ def job_view(job, version=None):
     view.update({k: copy.deepcopy(v) for k, v in selected.items() if k not in {'version', 'created'}})
     view['analysis_version'] = wanted
     view['selected_version'] = wanted
+    view['revision'] = int(selected.get('revision', 0))
+    view['source_identity'] = copy.deepcopy(selected.get('source_identity'))
     return view
+
+
+def save_version_segments(job, segments, version=None, revision=None):
+    wanted = int(version if version is not None else job.get('analysis_version', 1))
+    versions = job.setdefault('analysis_versions', [])
+    selected = next((v for v in versions if int(v['version']) == wanted), None)
+    if selected is None:
+        if versions or wanted != job.get('analysis_version', 1):
+            raise ValueError('版本不存在')
+        append_version(job)
+        selected = versions[-1]
+    if revision is not None and int(revision) != int(selected.get('revision', 0)):
+        raise ValueError('该版本已在另一页面更新，请重新载入后再保存')
+    selected.update(segments=copy.deepcopy(segments), edited=True, updated=time.time(),
+                    revision=int(selected.get('revision', 0)) + 1)
+    if wanted == job.get('analysis_version'):
+        job.update(segments=copy.deepcopy(segments), edited=True, updated=selected['updated'],
+                   revision=selected['revision'])
+    persist(job)
+    return wanted
+
+
+def restore_completed_version(identifier, state, message):
+    with LOCK:
+        job = get_job(identifier)
+        versions = job.get('analysis_versions') or []
+        if versions:
+            latest = max(versions, key=lambda v: int(v['version']))
+            job.update({k: copy.deepcopy(v) for k, v in latest.items() if k not in {'version', 'created'}})
+            job['analysis_version'] = latest['version']
+        job.update(state=state, message=message)
+        persist(job)
 
 
 def run_analysis(identifier):
     try:
         job = snapshot(identifier)
         import numpy as np
-        energy, spectra = extract_features(job['source'], job['duration'],
-            lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL)
+        from concert_sound_classifier import classifier_key
+        identity = verify_source(job['source'], job.get('source_identity'))
+        model_key = classifier_key()
+        vad_available = importlib.util.find_spec('webrtcvad') is not None
+        cache = directory(identifier) / 'features.npz'
+        energy = spectra = speech_activity = sound_scores = None
+        sound_cached = False
+        try:
+            with np.load(cache, allow_pickle=False) as values:
+                meta = json.loads(str(values['metadata'].item()))
+                if meta.get('format') == 2 and meta.get('source_identity') == identity:
+                    if meta.get('vad_available') == vad_available:
+                        energy, spectra = values['energy'].copy(), values['spectra'].copy()
+                        if (energy.ndim != 1 or not len(energy) or spectra.ndim != 2 or
+                                len(spectra) != len(energy) or not np.all(np.isfinite(energy)) or
+                                not np.all(np.isfinite(spectra))):
+                            energy = spectra = None
+                        speech_activity = values['speech_activity'].copy() if 'speech_activity' in values else None
+                    if meta.get('classifier_key') == model_key:
+                        sound_cached = True
+                        if 'sound_speech' in values:
+                            sound_scores = {'speech': values['sound_speech'].copy(),
+                                            'music': values['sound_music'].copy(),
+                                            'times': values['sound_times'].copy(),
+                                            'hop': .48, 'window': .975}
+        except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+            pass
+        reused = energy is not None and sound_cached
+        if energy is None:
+            energy, spectra, speech_activity = extract_features(job['source'], job['duration'],
+                lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL)
+        else:
+            update(identifier, progress=.85, message='正在复用已缓存音频特征')
         if identifier in CANCEL:
             raise Cancelled()
-        np.savez_compressed(directory(identifier)/'features.npz', energy=energy, spectra=spectra)
-        result = suggest(energy, spectra, job['duration'], job['min_length'], job['sensitivity'])
-        update(identifier, **result, state='ready', progress=1, updated=time.time(),
-               message=f'分析完成：{len(result["candidates"])} 个候选边界，请试听复核。')
+        classifier_warning = None
+        if not sound_cached:
+            try:
+                sound_scores = extract_sound_scores(job['source'], job['duration'],
+                    lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL)
+            except ValueError as exc:
+                # Optional classification must not discard valid boundary work.
+                classifier_warning = str(exc)
+                model_key = None  # Retry after model/runtime repair instead of caching failure.
+        if identifier in CANCEL:
+            raise Cancelled()
+        verify_source(job['source'], identity)
+        arrays = {'energy': energy, 'spectra': spectra,
+                  'metadata': json.dumps({'format': 2, 'source_identity': identity,
+                                         'vad_available': vad_available, 'classifier_key': model_key})}
+        if speech_activity is not None:
+            arrays['speech_activity'] = speech_activity
+        if sound_scores is not None:
+            arrays.update(sound_speech=sound_scores['speech'], sound_music=sound_scores['music'],
+                          sound_times=sound_scores['times'])
+        temporary = cache.with_suffix('.tmp')
+        try:
+            with temporary.open('wb') as stream:
+                np.savez_compressed(stream, **arrays)
+            temporary.replace(cache)
+        finally:
+            temporary.unlink(missing_ok=True)
+        result = suggest(energy, spectra, job['duration'], job['min_length'], job['sensitivity'],
+                         speech_activity=speech_activity, sound_scores=sound_scores)
+        if classifier_warning:
+            result['notice'] += ' 本次讲话分类不可用：' + classifier_warning
         with LOCK:
-            append_version(get_job(identifier))
-            persist(get_job(identifier))
+            current = get_job(identifier)
+            current.update(**result, state='ready', progress=1, updated=time.time(), source_identity=identity,
+                           cache_reused=reused, message=f'分析完成：{len(result["candidates"])} 个候选边界，请试听复核。')
+            append_version(current)
+            persist(current)
     except Cancelled:
-        update(identifier, state='cancelled', message='分析已取消')
+        restore_completed_version(identifier, 'cancelled', '分析已取消；已保存的版本和调整仍可继续使用。')
     except Exception as exc:
-        update(identifier, state='error', message=str(exc))
+        restore_completed_version(identifier, 'error', str(exc))
     finally:
         with LOCK:
             ACTIVE.discard(identifier)
@@ -200,32 +412,40 @@ def create_analysis(info, min_length, sensitivity):
            'analysis_versions': [], 'analysis_version': 1, 'version_count': 0}
     JOBS[identifier] = job
     persist(job)
-    ACTIVE.add(identifier)
-    threading.Thread(target=run_analysis, args=(identifier,), daemon=True).start()
+    start_worker(identifier, run_analysis, (identifier,))
     return identifier
 
 
 def restart_analysis(identifier, info, min_length, sensitivity):
     job = get_job(identifier)
-    next_version = len(job.get('analysis_versions') or []) + 1
+    identifier = job['id']
+    next_version = max((int(v['version']) for v in job.get('analysis_versions', [])), default=0) + 1
     job.update(**info, min_length=min_length, sensitivity=sensitivity, state='analyzing',
-               progress=0, message='正在读取音频', segments=[], candidates=[], waveform=[],
-               updated=time.time(), selected_version=None, analysis_version=next_version)
+               progress=0, message='正在读取音频', segments=[], candidates=[], waveform=[], speech_ranges=[],
+               updated=time.time(), selected_version=None, analysis_version=next_version, edited=False, revision=0)
     persist(job)
-    ACTIVE.add(identifier)
-    threading.Thread(target=run_analysis, args=(identifier,), daemon=True).start()
+    start_worker(identifier, run_analysis, (identifier,))
     return identifier
 
 
-def run_export(identifier, segments, mode, export_id):
+def run_export(identifier, segments, mode, export_id, resume=False):
+    def completed(value):
+        with LOCK:
+            current = get_job(identifier)
+            export = next(ex for ex in current['exports'] if ex['id'] == export_id)
+            export['files'] = [f for f in export['files'] if f['file'] != value['file']] + [value]
+            persist(current)
     try:
         job = snapshot(identifier)
-        files = export_segments(job['source'], segments, directory(identifier)/export_id, mode,
-            lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL)
+        export = next(ex for ex in job['exports'] if ex['id'] == export_id)
+        files = export_segments(job['source'], segments, export_directory(job, export), mode,
+            lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL,
+            completed_files=export['files'] if resume else None, on_complete=completed,
+            expected_identity=job.get('source_identity'))
         with LOCK:
             job = get_job(identifier)
-            job.setdefault('exports', []).append({'id': export_id, 'mode': mode, 'files': files,
-                                                  'path': str(directory(identifier)/export_id)})
+            export = next(ex for ex in job['exports'] if ex['id'] == export_id)
+            export.update(files=files, state='done')
             job.update(state='done', progress=1, message=f'已导出 {len(files)} 个片段')
             persist(job)
     except Cancelled:
@@ -234,50 +454,18 @@ def run_export(identifier, segments, mode, export_id):
         update(identifier, state='error', message=str(exc))
     finally:
         with LOCK:
-            ACTIVE.discard(identifier)
-            CANCEL.discard(identifier)
+            try:
+                current = get_job(identifier)
+                export = next(ex for ex in current.get('exports', []) if ex['id'] == export_id)
+                export['state'] = current['state']
+                persist(current)
+            finally:
+                ACTIVE.discard(identifier)
+                CANCEL.discard(identifier)
 
 
 def serve_file(handler, path):
-    if not path.is_file():
-        raise FileNotFoundError('文件不存在或原视频已移动')
-    size = path.stat().st_size
-    start, end, code = 0, size-1, 200
-    value = handler.headers.get('Range')
-    if value:
-        match = re.fullmatch(r'bytes=(\d*)-(\d*)', value)
-        if not match or not any(match.groups()):
-            return handler._send(416, 'text/plain', b'', {'Content-Range': f'bytes */{size}'})
-        a, b = match.groups()
-        if a:
-            start, end = int(a), min(int(b), size-1) if b else size-1
-        else:
-            start = max(0, size-int(b))
-        if start > end or start >= size:
-            return handler._send(416, 'text/plain', b'', {'Content-Range': f'bytes */{size}'})
-        code = 206
-    handler.send_response(code)
-    handler.send_header('Content-Type', mimetypes.guess_type(path.name)[0] or 'application/octet-stream')
-    handler.send_header('Content-Length', str(max(0, end-start+1)))
-    handler.send_header('Accept-Ranges', 'bytes')
-    handler.send_header('Cache-Control', 'no-store')
-    if code == 206:
-        handler.send_header('Content-Range', f'bytes {start}-{end}/{size}')
-    if 'download=1' in handler.path:
-        handler.send_header('Content-Disposition', "attachment; filename*=UTF-8''" + quote(path.name))
-    handler.end_headers()
-    try:
-        with path.open('rb') as stream:
-            stream.seek(start)
-            remaining = end-start+1
-            while remaining > 0:
-                chunk = stream.read(min(1024*1024, remaining))
-                if not chunk:
-                    break
-                handler.wfile.write(chunk)
-                remaining -= len(chunk)
-    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
-        pass
+    return send_media_file(handler, path, download=parse_qs(urlparse(handler.path).query).get('download') == ['1'])
 
 
 def dispatch_get(handler, path, query):
@@ -288,18 +476,13 @@ def dispatch_get(handler, path, query):
             for file in ROOT.glob('*/concert.json'):
                 try:
                     identifier = file.parent.name
-                    raw = JOBS.get(identifier)
-                    if raw is None:
-                        raw = json.loads(file.read_text(encoding='utf-8'))
-                    if raw.get('merged_into'):
-                        continue
-                    j = snapshot(identifier)
-                    if j.get('legacy_versions_migrated') and str(j.get('message', '')).startswith('已合并到版本记录'):
-                        j['message'] = f'已完成分析版本 v{j.get("analysis_version", 1)}，可在版本菜单中切换。'
-                        JOBS[identifier] = j
-                        persist(j)
+                    with LOCK:
+                        raw = JOBS.get(identifier) or json.loads(file.read_text(encoding='utf-8'))
+                        if raw.get('merged_into'):
+                            continue
+                        j = snapshot(identifier)
                     records.append({k: j.get(k) for k in ('id', 'name', 'state', 'duration', 'created', 'message', 'analysis_version', 'version_count', 'sensitivity')})
-                except (OSError, ValueError):
+                except (OSError, ValueError, KeyError, TypeError):
                     continue
             return handler._json(sorted(records, key=lambda j: -j['created']))
         if path == '/api/concert/job':
@@ -313,10 +496,14 @@ def dispatch_get(handler, path, query):
                 return serve_file(handler, Path(job['source']))
             # Only published artifacts, never arbitrary paths inside a task.
             if parts[1:] == ['concert.json']:
-                return serve_file(handler, directory(parts[0])/'concert.json')
+                return serve_file(handler, directory(job['id'])/'concert.json')
             for export in job.get('exports', []):
                 if len(parts) == 3 and parts[1] == export['id'] and parts[2] in ['manifest.json']+[f['file'] for f in export['files']]:
-                    return serve_file(handler, directory(parts[0])/parts[1]/parts[2])
+                    folder = export_directory(job, export)
+                    target = folder / parts[2]
+                    if Path(parts[2]).name != parts[2] or not target.resolve().is_relative_to(folder.resolve()):
+                        raise ValueError('无效导出文件名')
+                    return serve_file(handler, target)
             raise FileNotFoundError('未找到导出文件')
         return handler._json({'error': 'not found'}, 404)
     except FileNotFoundError as exc:
@@ -336,15 +523,8 @@ def dispatch_post(handler, path):
         # HTTP/1.1 keep-alive, leaving JSON unread makes it look like the next
         # GET request starts with '{...GET /', producing a misleading 400 log.
         body = handler._body()
-        origin = handler.headers.get('Origin')
-        if origin and origin.lower() not in {'null'}:
-            parsed_origin = urlparse(origin)
-            origin_host = (parsed_origin.hostname or '').lower()
-            request_host = (handler.headers.get('Host') or '').lower()
-            request_hostname = request_host.rsplit(':', 1)[0].strip('[]')
-            is_loopback = origin_host == 'localhost' or origin_host == '::1' or origin_host.startswith('127.')
-            if not is_loopback and origin_host != request_hostname:
-                return handler._json({'error': '仅允许本地工作台发起操作'}, 403)
+        if not request_allowed(handler):
+            return handler._json({'error': '仅允许本地工作台发起操作'}, 403)
         if 'application/json' not in content_type:
             return handler._json({'error': '需要 JSON 请求'}, 415)
         data = json.loads(body)
@@ -372,17 +552,19 @@ def dispatch_post(handler, path):
                 import math
                 if not math.isfinite(min_length) or not 30 <= min_length <= 1800 or sensitivity not in {'balanced', 'sensitive', 'conservative'}:
                     raise ValueError('分析参数无效')
+                verify_source(old['source'], old.get('source_identity'))
                 identifier = restart_analysis(old['id'], probe(old['source']), min_length, sensitivity)
             return handler._json({'id': identifier}, 202)
         identifier = data.get('id', '')
         with LOCK:
             job = get_job(identifier)
+            running = active_ids(job['id'])
+            identifier = job['id']
             if path == '/api/concert/cancel':
-                if identifier in ACTIVE:
-                    CANCEL.add(identifier)
+                CANCEL.update(running)
                 return handler._json({'ok': True})
             if path == '/api/concert/delete':
-                if identifier in ACTIVE:
+                if running:
                     return handler._json({'error': '任务运行期间不能删除记录'}, 409)
                 canonical = get_job(identifier)
                 canonical_id = canonical['id']
@@ -390,17 +572,47 @@ def dispatch_post(handler, path):
                 for record in ROOT.glob('*/concert.json'):
                     try:
                         raw = json.loads(record.read_text(encoding='utf-8'))
-                    except (OSError, ValueError):
+                        belongs = get_job(raw['id'])['id'] == canonical_id
+                    except (OSError, ValueError, KeyError, TypeError):
                         continue
-                    if raw.get('id') == canonical_id or raw.get('merged_into') == canonical_id:
+                    if belongs:
                         folder = record.parent.resolve()
                         if folder.is_relative_to(ROOT.resolve()) and folder != ROOT.resolve():
-                            shutil.rmtree(folder)
-                            removed.append(raw.get('id'))
-                            JOBS.pop(raw.get('id'), None)
-                return handler._json({'ok': True, 'removed': removed})
-            if identifier in ACTIVE:
+                            removed.append((raw.get('id'), folder))
+                for record_id, folder in removed:
+                    shutil.rmtree(folder)
+                    JOBS.pop(record_id, None)
+                return handler._json({'ok': True, 'removed': [record_id for record_id, _ in removed]})
+            if running:
                 return handler._json({'error': '任务运行期间不能修改分段'}, 409)
+            if path == '/api/concert/resume-export':
+                if ACTIVE:
+                    return handler._json({'error': '已有切割任务在处理'}, 409)
+                export = next((ex for ex in job.get('exports', []) if ex['id'] == data.get('export_id')), None)
+                if not export or export.get('state', 'done') == 'done' or not export.get('segments'):
+                    raise ValueError('此批次没有可继续的导出')
+                if not export.get('source_identity'):
+                    raise ValueError('此旧批次未记录原视频指纹，请重新分析并导出')
+                verify_source(job['source'], export['source_identity'])
+                folder = export_directory(job, export)
+                manifest = folder / 'manifest.json'
+                if manifest.is_file():
+                    saved = json.loads(manifest.read_text(encoding='utf-8'))
+                    if (saved.get('source_identity') != export['source_identity'] or
+                            saved.get('planned_segments') != [s for s in export['segments'] if s['selected']]):
+                        raise ValueError('导出清单已改变，请新建批次')
+                    published = {f['file']: f for f in export['files']}
+                    for value in saved.get('segments', []):
+                        if Path(value['file']).name != value['file']:
+                            raise ValueError('导出清单文件名无效')
+                        published[value['file']] = value
+                    export['files'] = list(published.values())
+                export['state'] = 'exporting'
+                job.update(state='exporting', progress=0, message='正在继续未完成片段')
+                persist(job)
+                start_worker(identifier, run_export, (identifier, copy.deepcopy(export['segments']),
+                             export['mode'], export['id'], True))
+                return handler._json({'id': identifier, 'version': export.get('version')}, 202)
             if path in {'/api/concert/save', '/api/concert/export'}:
                 segments = validate_segments(data.get('segments'), job['duration'])
                 if path.endswith('/export'):
@@ -409,17 +621,22 @@ def dispatch_post(handler, path):
                     mode = data.get('mode', 'copy')
                     if mode not in {'copy', 'precise'} or not any(s['selected'] for s in segments):
                         raise ValueError('请选择有效导出模式及至少一个片段')
-                job['segments'] = segments
-                job['edited'] = True
-                persist(job)
+                    viewed = job_view(job, data.get('version')) if data.get('version') is not None else job
+                    if not viewed.get('source_identity'):
+                        raise ValueError('此旧版本未记录原视频指纹，请重新分析后再导出')
+                    verify_source(job['source'], viewed['source_identity'])
+                version = save_version_segments(job, segments, data.get('version'), data.get('revision'))
                 if path.endswith('/save'):
-                    return handler._json(copy.deepcopy(job))
+                    return handler._json(job_view(job, version))
                 export_id = 'export-' + uuid.uuid4().hex[:12]
+                job.setdefault('exports', []).append({'id': export_id, 'mode': mode, 'files': [],
+                    'owner_id': identifier, 'path': str(directory(identifier)/export_id),
+                    'source_identity': copy.deepcopy(job['source_identity']),
+                    'segments': copy.deepcopy(segments), 'version': version, 'state': 'exporting'})
                 job.update(state='exporting', progress=0, message='准备导出', current_export=str(directory(identifier)/export_id))
                 persist(job)
-                ACTIVE.add(identifier)
-                threading.Thread(target=run_export, args=(identifier, copy.deepcopy(segments), mode, export_id), daemon=True).start()
-                return handler._json({'id': identifier}, 202)
+                start_worker(identifier, run_export, (identifier, copy.deepcopy(segments), mode, export_id))
+                return handler._json({'id': identifier, 'version': version}, 202)
         return handler._json({'error': 'not found'}, 404)
     except FileNotFoundError as exc:
         return handler._json({'error': str(exc)}, 404)

@@ -16,6 +16,7 @@ MODELS = ROOT / "models"
 PACKAGE_INFO = {
     "numpy": ("numpy", "numpy"),
     "scipy": ("scipy", "scipy"),
+    "webrtcvad": ("webrtcvad", "WebRTC VAD (webrtcvad-wheels)"),
     "soundfile": ("soundfile", "soundfile"),
     "librosa": ("librosa", "librosa"),
     "torch": ("torch", "torch"),
@@ -36,9 +37,11 @@ PACKAGE_INFO = {
     "matplotlib": ("matplotlib", "matplotlib"),
     "pandas": ("pandas", "pandas"),
     "rapidfuzz": ("rapidfuzz", "rapidfuzz"),
+    "onnxruntime": ("onnxruntime", "ONNX Runtime CPU"),
 }
 
 BASE_PACKAGES = ("numpy", "scipy")
+CONCERT_PACKAGES = BASE_PACKAGES + ("webrtcvad", "onnxruntime")
 WHISPER_PACKAGES = BASE_PACKAGES + (
     "soundfile", "librosa", "torch", "torchaudio", "whisper", "stable_whisper", "demucs",
 )
@@ -47,7 +50,7 @@ SOFA_PACKAGES = WHISPER_PACKAGES + (
     "pykakasi", "textgrid", "lightning", "tensorboardX", "h5py", "einops",
     "yaml", "matplotlib", "pandas",
 )
-FULL_PACKAGES = tuple(dict.fromkeys(QWEN_PACKAGES + SOFA_PACKAGES + ("rapidfuzz",)))
+FULL_PACKAGES = tuple(dict.fromkeys(QWEN_PACKAGES + SOFA_PACKAGES + ("rapidfuzz", "webrtcvad", "onnxruntime")))
 
 PROFILES = {
     "whisper": {
@@ -60,11 +63,11 @@ PROFILES = {
     },
     "concert": {
         "label": "演唱会切割最小环境",
-        "purpose": "本地长视频音轨分析、边界编辑和 FFmpeg 分段导出",
-        "packages": BASE_PACKAGES,
+        "purpose": "本地长视频边界分析、讲话/音乐分类提示、边界编辑和 FFmpeg 分段导出",
+        "packages": CONCERT_PACKAGES,
         "cuda": False,
         "disk_gib": 2,
-        "models": (),
+        "models": ("yamnet",),
     },
     "qwen": {
         "label": "Qwen 完整字幕环境",
@@ -88,7 +91,7 @@ PROFILES = {
         "packages": FULL_PACKAGES,
         "cuda": True,
         "disk_gib": 20,
-        "models": ("whisper", "aligner", "asr", "sofa"),
+        "models": ("whisper", "aligner", "asr", "sofa", "yamnet"),
     },
 }
 
@@ -121,6 +124,10 @@ def qwen_complete(directory: Path) -> tuple[bool, float]:
 
 
 def model_status(kind: str) -> tuple[bool, str]:
+    if kind == "yamnet":
+        from fetch_concert_model import DEST, FILES, valid
+        ready = all(valid(DEST / name, size, digest) for name, (size, digest) in FILES.items())
+        return ready, f"约 15.4 MiB，CPU 讲话/音乐分类模型（{DEST}）"
     if kind == "whisper":
         directory = MODELS / "whisper"
         files = list(directory.glob("*.pt")) if directory.exists() else []
@@ -153,8 +160,11 @@ def main(argv: list[str] | None = None) -> int:
     print(f"项目目录: {ROOT}")
     print("=" * 72)
 
-    if sys.version_info >= (3, 11):
+    if sys.version_info[:2] == (3, 11):
         line("Python", f"{sys.version.split()[0]} ({sys.executable})", "PASS")
+    elif sys.version_info >= (3, 11):
+        line('Python', f'{sys.version.split()[0]}；安装脚本仅支持已验证的 3.11.x', 'WARN')
+        warnings += 1
     else:
         line("Python", f"需要 3.11+，当前 {sys.version.split()[0]}", "FAIL")
         failures += 1
@@ -177,6 +187,13 @@ def main(argv: list[str] | None = None) -> int:
             failures += 1
 
     print("\n媒体工具")
+    if sys.platform == 'win32':
+        try:
+            importlib.import_module('win32job')
+            line('Windows 进程回收', 'pywin32 可用', 'PASS')
+        except ImportError:
+            line('Windows 进程回收', '缺少 pywin32；仍能正常取消，但意外退出回收会降级', 'WARN')
+            warnings += 1
     for command in ("ffmpeg", "ffprobe"):
         version = command_version(command)
         if version:
@@ -191,6 +208,9 @@ def main(argv: list[str] | None = None) -> int:
             torch = importlib.import_module("torch")
             cuda_version = getattr(torch.version, "cuda", None) or "未知"
             if torch.cuda.is_available():
+                # Device visibility alone does not prove wheel/architecture
+                # compatibility, especially on newer Blackwell GPUs.
+                torch.ones(1, device='cuda').sum().item()
                 count = torch.cuda.device_count()
                 for index in range(count):
                     props = torch.cuda.get_device_properties(index)

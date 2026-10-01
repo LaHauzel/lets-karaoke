@@ -3,9 +3,9 @@
 
 适用场景
 --------
-**演唱 / 带伴奏** 的音频。Qwen3-ForcedAligner 在这类音频上整体失效
-（无论文本对错都输出大量零宽单元，且零宽比率对文本正确性无判别力，
-见 skill ``local-forced-align`` 坑 14）；whisper 的交叉注意力 DTW 对演唱明显更稳。
+**演唱 / 带伴奏** 的音频。已有样本中 Qwen3-ForcedAligner 的歌唱时间戳
+曾出现大量零宽单元，因此提供 Whisper 交叉注意力 DTW 路线。零宽比例不能
+判断歌词文本是否正确；各后端真实歌唱精度仍需独立真值评测。
 
 用法
 ----
@@ -15,7 +15,7 @@
 
 产出一套三件：增强 LRC（可直接喂 ``pipeline.py``）、plain.txt、srt。
 
-后处理（实测必要）
+后处理（按策略选择，可能需要人工复核）
 ------------------
 1. **行内断档重排**：whisper 偶尔把个别词甩过器乐段（同句的词一个在 solo 前、
    一个在 solo 后）。句内词间隔 > ``GAP_MAX`` 秒几乎必然是错锚 —— 整句按
@@ -36,6 +36,7 @@ import statistics
 import sys
 import threading
 import time
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -169,19 +170,86 @@ def _nsp(s: str) -> str:
 # ==========================================================================
 
 def group_words_to_lines(words: list[list], lines: list[str]) -> tuple[list[list], int]:
-    """按「去空白后字符数配平」把词分到歌词行。返回 (分组, 已覆盖词数)。"""
-    lens = [len(_nsp(t)) for t in lines]
+    """Map text occurrences to rows, splitting a model word across row breaks.
+
+    Stable-ts units need not respect input newlines. Counting whole words
+    loses a row when one unit spans two lines, and punctuation differences
+    shift every following row. Match normalized character occurrences first;
+    unmatched spoken text is not silently assigned to the next lyric row.
+    """
+    def keys(text):
+        for index, char in enumerate(text):
+            for value in unicodedata.normalize('NFKC', char).casefold():
+                if value.isalnum():
+                    yield value, index
+
+    target, target_rows = [], []
+    for row, text in enumerate(lines):
+        for value, _ in keys(text):
+            target.append(value)
+            target_rows.append(row)
+    source, source_positions = [], []
+    for wi, word in enumerate(words):
+        for value, position in keys(word[0]):
+            source.append(value)
+            source_positions.append((wi, position))
+    ownership = {}
+    if source == target:
+        ownership = dict(zip(source_positions, target_rows))
+    else:
+        # Whole-unit anchors take precedence over matching isolated letters.
+        # A character diff can steal the final “a” in “alpha” for a missing
+        # later line “beta”, hiding the missing row. Forced alignment already
+        # has supplied text: units without an exact normalized occurrence are
+        # incomplete evidence and stay unassigned, rather than inventing one.
+        reference, cursor = ''.join(target), 0
+        for wi, word in enumerate(words):
+            positions = list(keys(word[0]))
+            spelling = ''.join(value for value, _ in positions)
+            if not spelling:
+                continue
+            found = reference.find(spelling, cursor)
+            if found < 0:
+                continue
+            for i, (_, position) in enumerate(positions):
+                ownership[(wi, position)] = target_rows[found + i]
+            cursor = found + len(spelling)
+    per_word = {}
+    for (wi, position), row in ownership.items():
+        per_word.setdefault(wi, {})[position] = row
     groups: list[list] = [[] for _ in lines]
-    k, acc = 0, 0
-    for w in words:
-        if k >= len(lines):
-            break
-        groups[k].append(w)
-        acc += len(_nsp(w[0]))
-        while acc >= lens[k] and k < len(lines) - 1:
-            acc -= lens[k]
-            k += 1
-    return groups, sum(len(g) for g in groups)
+    covered = 0
+    for wi, word in enumerate(words):
+        text, start, end = word[:3]
+        probability = word[3] if len(word) > 3 else 1.0
+        matched = per_word.get(wi, {})
+        if not matched:
+            continue
+        covered += 1
+        visible = [i for i, char in enumerate(text) if not char.isspace()]
+        ranks = {position: rank for rank, position in enumerate(visible)}
+        count = max(1, len(visible))
+        fragments = []
+        previous = None
+        for position, char in enumerate(text):
+            row = ownership.get((wi, position))
+            if row is None:
+                if any(True for _ in keys(char)):
+                    continue  # Unmatched letters are not acoustic evidence.
+                row = previous if previous is not None else next(iter(matched.values()))
+            previous = row
+            if not fragments or fragments[-1][0] != row:
+                fragments.append([row, [], []])
+            fragments[-1][1].append(' ' if char in '\r\n' else char)
+            if position in ranks:
+                fragments[-1][2].append(ranks[position])
+        for row, chars, positions in fragments:
+            if not positions or not ''.join(chars).strip():
+                continue
+            duration = max(0.0, end - start)
+            groups[row].append([''.join(chars), start + duration * min(positions) / count,
+                                start + duration * (max(positions) + 1) / count, probability])
+    return groups, covered
 
 
 def estimate_rate(words: list[list]) -> float:

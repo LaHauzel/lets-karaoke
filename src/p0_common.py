@@ -14,12 +14,12 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
+from process_runner import run_process
 
 SR = 16000  # 对齐模型统一采样率
 
@@ -84,34 +84,38 @@ def tokenize(text: str, spec: LangSpec) -> list[str]:
     """按语言粒度切分为 token 列表，丢弃标点与空白。"""
     text = unicodedata.normalize("NFKC", text)
 
-    if spec.granularity == "char":
-        out = []
-        for ch in text:
-            if ch.isspace():
-                continue
-            cat = unicodedata.category(ch)
-            if cat.startswith("P") or cat.startswith("S"):
-                continue  # 标点/符号
-            if spec.code == "ja":
-                # 日文额外允许长音符
-                if ch in ("ー", "・"):
-                    continue
-            if is_cjk(ch) or (spec.code == "en"):
-                out.append(ch)
-            elif spec.code == "ja" and ch.isascii() and ch.isalpha():
-                out.append(ch)  # 日文里的拉丁字母（如歌词里的英文单词）保留
-        return out
-
-    # word 粒度
-    parts = re.split(r"[\s\u3000]+", text.strip())
-    out = []
-    for p in parts:
-        p = p.strip()
-        p = p.strip("".join(chr(c) for c in range(0x21, 0x2F)))
-        p = re.sub(r"^[^\w']+|[^\w']+$", "", p)
-        if p:
-            out.append(p)
+    # Script, rather than the song's main language, owns the granularity.
+    # Otherwise an English chorus in a Chinese song disappears from the
+    # alignment target and merely rides along with the preceding Chinese字.
+    out, word = [], []
+    def flush():
+        if word:
+            out.append("".join(word))
+            word.clear()
+    for i, ch in enumerate(text):
+        if is_cjk(ch) or ch in "々〆〇":
+            flush()
+            out.append(ch)  # Includes the pronounced Japanese long vowel ー.
+        elif ch.isalnum() or (unicodedata.category(ch).startswith("M") and word):
+            word.append(ch)
+        elif ch in "'’" and word and i + 1 < len(text) and text[i + 1].isalnum():
+            word.append(ch)
+        else:
+            flush()
+    flush()
     return out
+
+
+def alignment_text(tokens: list[str], lang: str) -> str:
+    """Join CJK characters while retaining boundaries between foreign words."""
+    if lang == "en":
+        return " ".join(tokens)
+    parts = []
+    for i, token in enumerate(tokens):
+        if i and token and tokens[i - 1] and not is_cjk(token[0]) and not is_cjk(tokens[i - 1][-1]):
+            parts.append(" ")
+        parts.append(token)
+    return "".join(parts)
 
 
 # --------------------------------------------------------------------------
@@ -123,7 +127,7 @@ def ffmpeg_exe() -> str:
     return "ffmpeg"
 
 
-def load_audio_16k(path: str | Path) -> np.ndarray:
+def load_audio_16k(path: str | Path, cancel=None) -> np.ndarray:
     """任何格式 -> 16 kHz 单声道 float32 numpy。走 ffmpeg，避免 libsndfile 的 mp3/flac 支持问题。"""
     cmd = [
         ffmpeg_exe(), "-nostdin", "-v", "error",
@@ -132,7 +136,7 @@ def load_audio_16k(path: str | Path) -> np.ndarray:
         "-ac", "1", "-ar", str(SR),
         "-",
     ]
-    raw = subprocess.run(cmd, capture_output=True, check=True).stdout
+    raw = run_process(cmd, check=True, cancel=cancel, timeout=1800).stdout
     return np.frombuffer(raw, dtype=np.float32).copy()
 
 
@@ -150,7 +154,7 @@ def probe_duration(path: str | Path) -> float:
         "-of", "default=noprint_wrappers=1:nokey=1",
         str(path),
     ]
-    return float(subprocess.run(cmd, capture_output=True, check=True).stdout.decode().strip())
+    return float(run_process(cmd, check=True, timeout=30).stdout.decode().strip())
 
 
 def trim_silence(

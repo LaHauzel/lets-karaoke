@@ -9,16 +9,16 @@ The menu order is the recommended feature order:
 | Option | Profile | Function | GPU/CUDA | Models |
 | --- | --- | --- | --- | --- |
 | 1 | Whisper subtitles | Known-lyrics Whisper/stable-ts alignment, subtitle rendering, optional Demucs separation | Required | Whisper |
-| 2 | Concert segmentation minimum | Long-video audio analysis, waveform editing with boundary snapping, and FFmpeg segment export | Not required | None |
+| 2 | Concert segmentation minimum | Long-video analysis, speech/music review markers, waveform editing with boundary snapping, and FFmpeg segment export | Not required | Small YAMNet model (~15.4 MiB, CPU) |
 | 3 | Qwen full subtitles | Whisper plus Qwen ForcedAligner, ASR lyric drafts, and Wav2Vec2 support | Required | Whisper, ForcedAligner, ASR |
 | 4 | SOFA singing alignment | Whisper line windows followed by SOFA phoneme-level singing alignment | Required | Whisper, SOFA checkpoint |
-| 5 | Full environment | Whisper, Qwen, SOFA, Demucs, and all supported subtitle backends | Required | Whisper, Qwen, SOFA |
+| 5 | Full environment | Whisper, Qwen, SOFA, Demucs, and all supported subtitle backends | Required | Whisper, Qwen, SOFA, small YAMNet classifier |
 
-Python dependencies and model weights are separate steps. Selecting a profile installs only its Python requirements; it does not silently download multi-gigabyte model files. If you only need concert segmentation, choose option 2 and skip CUDA and all model downloads.
+Large subtitle models remain a separate step. Option 2 also downloads a small local YAMNet audio classifier (~15.4 MiB) for speech/music review markers. It uses the CPU and never changes cut boundaries automatically. Concert-only setup still skips CUDA, Whisper, Qwen, and SOFA.
 
 ## Prerequisites
 
-1. Install Python 3.11 or newer and verify that the command-line python points to it.
+1. Install 64-bit Python 3.11.x and verify that the command-line python points to it. The installer rejects other versions because the model dependency combination has not been validated on them.
 2. Install FFmpeg and add the directory containing ffmpeg.exe and ffprobe.exe to PATH.
 3. NVIDIA drivers and working CUDA are required for profiles 1, 3, 4, and 5. Profile 2 does not need a GPU.
 4. Keep enough disk space for dependencies, model caches, and exports. pip and the model downloaders print live progress.
@@ -39,9 +39,18 @@ From the repository directory, run:
 setup_guide.bat
 ~~~
 
+The default scripts install into that interpreter. For an isolated environment:
+
+~~~bat
+setup_venv.bat whisper
+webui_venv.bat
+~~~
+
+Replace `whisper` with the required profile. Use `.venv\Scripts\python.exe` for downloads and diagnostics, or activate `.venv\Scripts\activate.bat` first. GPU setup reuses an existing installation only after checking PyTorch/torchaudio 2.9.0, CUDA 12.8, and an actual GPU tensor operation.
+
 Choose the profile that matches the work:
 
-- Concert segmentation only: choose **[2]**. It installs requirements-concert.txt and is sufficient for the concert tab.
+- Concert segmentation only: choose **[2]**. It installs requirements-concert.txt and the small speech/music classifier for the concert tab.
 - Known-lyrics Whisper alignment: choose **[1]**, then choose **[6]** to download a Whisper checkpoint.
 - Qwen alignment or lyric drafts without a lyric file: choose **[3]**, then download the Whisper and Qwen models with **[6]** and **[7]**.
 - SOFA alignment: choose **[4]**, download Whisper with **[6]**, and place the SOFA checkpoint manually.
@@ -116,7 +125,7 @@ python --version
 where python
 ~~~
 
-Install Python 3.11+ and reopen the terminal if the version is too old.
+Install the tested Python 3.11.x and reopen the terminal so the installer and launcher use the same interpreter.
 
 ### FFmpeg is not found
 

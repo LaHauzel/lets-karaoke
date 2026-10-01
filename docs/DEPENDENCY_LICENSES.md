@@ -1,6 +1,6 @@
 # 本地依赖与许可证审查
 
-审查日期：2026-09-24。以下结论用于仓库发布规划，不替代针对具体分发方式的法律意见。
+原审查日期：2026-09-24；2026-10-01 补充演唱会与测试依赖。以下结论用于仓库发布规划，不替代针对具体分发方式的法律意见。
 
 ## 结论
 
@@ -25,6 +25,10 @@
 | Demucs | 4.0.1 | MIT（代码） | 模型权重单独核对，不入库 |
 | openai-whisper | 20250625 | MIT（代码） | 模型文件单独核对，不入库 |
 | stable-ts | 2.19.1 | MIT | 允许宽松分发 |
+| ONNX Runtime / YAMNet ONNX | requirements 范围 / 外部模型页 | MIT / Apache-2.0 | 保留 ONNX 附带第三方通知；模型单独下载，不入库 |
+| webrtcvad-wheels | 2.x | MIT Python 包装；内含 WebRTC BSD 通知 | 按实际 wheel 核对并保留内嵌通知 |
+| pywin32 | Windows 条件依赖 | PSF License | 进程退出回收所需；按实际安装包保留许可 |
+| requests / Node.js | Qwen下载器及HTTP测试 / 前端测试工具 | Apache-2.0 / MIT 及附带第三方许可 | 按下载器与测试环境的实际分发核对 |
 | qwen-asr / transformers / huggingface-hub | 0.0.6 / 4.57.6 / 0.34.4 | Apache-2.0 | 保留 Apache 通知；模型条款另行核对 |
 | pykakasi | 2.3.0 | GPL-3.0-or-later | 需要 GPL 兼容性审查；建议改为可选依赖 |
 | Lightning | 2.6.6 | Apache-2.0 | 保留 Apache 通知 |

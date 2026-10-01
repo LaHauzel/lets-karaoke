@@ -14,7 +14,7 @@
 出在字幕层。本模块用两条硬约束把它按死在生成阶段：
 
   A. 每个歌词行只生成 **一个** 卡拉OK事件；
-  B. 所有卡拉OK事件的时间窗两两不重叠（end_i <= start_{i+1} - min_gap），
+  B. 非重叠演唱行的事件窗不重叠；空档仅使用实际可用的间隔，
      而不是依赖播放器「谁在上面盖住谁」。
 
 「下一句预览」是不同角色的事件（Dim 样式 + 更低 MarginV），它允许与当前行
@@ -94,6 +94,7 @@ class AssOptions:
     line_count: int = 2              # 当前行及后续歌词行数（1–3）
     position_x: int = 50             # 字幕锚点，画面宽度百分比
     position_y: int = 89             # 字幕锚点，画面高度百分比
+    line_positions: tuple[tuple[float, float], ...] | None = None  # 每个显示行槽的 (X%, Y%)
     next_scale: float = 0.62
     next_margin_v: int = 46
     next_color: tuple[int, int, int] = (176, 184, 196)
@@ -120,12 +121,34 @@ def ass_color(rgb: tuple[int, int, int], alpha: int = 0) -> str:
 
 def esc_text(s: str) -> str:
     """ASS 正文转义：花括号会开启/结束 override 块，必须中和。"""
-    return s.replace("\\", "＼").replace("{", "（").replace("}", "）")
+    return (s.replace("\\", "＼").replace("{", "（").replace("}", "）")
+            .replace("\r\n", "\n").replace("\r", "\n").replace("\n", r"\N"))
 
 
 def cs(seconds: float) -> int:
     """秒 -> 厘秒（\\k/\\kf 的单位）。"""
     return max(1, int(round(seconds * 100.0)))
+
+
+def parse_line_positions(value) -> tuple[tuple[float, float], ...] | None:
+    """解析前端传来的逐行位置；旧任务没有此字段，继续走整体位置兼容逻辑。"""
+    if not isinstance(value, (list, tuple)):
+        return None
+    positions = []
+    for item in value[:3]:
+        try:
+            if isinstance(item, dict):
+                x, y = float(item["x"]), float(item["y"])
+            elif isinstance(item, (list, tuple)) and len(item) >= 2:
+                x, y = float(item[0]), float(item[1])
+            else:
+                return None
+            if not math.isfinite(x) or not math.isfinite(y):
+                return None
+            positions.append((max(0.0, min(100.0, x)), max(0.0, min(100.0, y))))
+        except (KeyError, TypeError, ValueError):
+            return None
+    return tuple(positions) or None
 
 
 def est_width(s: str, font_size: float) -> float:
@@ -148,65 +171,41 @@ def est_width(s: str, font_size: float) -> float:
 
 
 def solve_windows(lines: list[KaraokeLine], opt: AssOptions) -> None:
-    """为每个行求解事件时间窗，就地写回 ev_start / ev_end。
+    """Trim decorative padding, never the actual singing interval.
 
-    两趟扫描：
-      第一趟 定 start：行首提前 lead_ms，但不得侵入上一行的结束 + min_gap
-      第二趟 定 end  ：行尾延后 tail_ms，但不得侵入下一行的 start - min_gap
-    这样得到的事件窗集合一定是两两不重叠的（同一方向推挤，单调）。
+    Adjacent sung lines can have no silence at all; in that case both lead-in
+    and the requested inter-event gap yield to the acoustic boundary. Genuine
+    overlap in the input remains visible to check_windows instead of silently
+    chopping a held note or shifting the next singer's words forward.
     """
-    n = len(lines)
-    if n == 0:
-        return
-    lead = opt.lead_ms / 1000.0
-    tail = opt.tail_ms / 1000.0
-    gap = opt.min_gap_ms / 1000.0
-
-    for i, ln in enumerate(lines):
-        want = ln.start - lead
-        if i == 0:
-            ln.ev_start = max(0.0, want)
-        else:
-            ln.ev_start = max(want, lines[i - 1].ev_start + MIN_EVENT_MS / 1000.0,
-                              ln.start - lead)
-            # 真正的下界由上一行的 ev_end 决定，这里先给一个保守值，
-            # 第二趟结束后再统一前推修正（见下方 forward fix）
-            ln.ev_start = max(ln.ev_start, 0.0)
-
-    for i, ln in enumerate(lines):
-        want = ln.end + tail
-        if i + 1 < n:
-            ln.ev_end = min(want, lines[i + 1].start - lead - gap)
-        else:
-            ln.ev_end = want
-        # 至少活得够 MIN_EVENT_MS
-        if ln.ev_end < ln.ev_start + MIN_EVENT_MS / 1000.0:
-            ln.ev_end = ln.ev_start + MIN_EVENT_MS / 1000.0
-
-    # 前向修正：保证 ev_start_i >= ev_end_{i-1} + gap
-    for i in range(1, n):
-        lo = lines[i - 1].ev_end + gap
-        if lines[i].ev_start < lo:
-            lines[i].ev_start = lo
-            if lines[i].ev_end < lines[i].ev_start + MIN_EVENT_MS / 1000.0:
-                lines[i].ev_end = lines[i].ev_start + MIN_EVENT_MS / 1000.0
-    # 反向修正：保证 ev_end_i <= ev_start_{i+1} - gap
-    for i in range(n - 2, -1, -1):
-        hi = lines[i + 1].ev_start - gap
-        if lines[i].ev_end > hi:
-            lines[i].ev_end = hi
-            if lines[i].ev_start > lines[i].ev_end - MIN_EVENT_MS / 1000.0:
-                lines[i].ev_start = max(0.0, lines[i].ev_end - MIN_EVENT_MS / 1000.0)
+    lead, tail, gap = (max(0, value) / 1000 for value in
+                       (opt.lead_ms, opt.tail_ms, opt.min_gap_ms))
+    for line in lines:
+        line.ev_start = max(0.0, line.start - lead)
+        line.ev_end = max(line.end + tail, line.ev_start + MIN_EVENT_MS / 1000)
+    for previous, current in zip(lines, lines[1:]):
+        if previous.end > current.start:
+            previous.ev_end = previous.end
+            current.ev_start = max(0.0, current.start)
+            continue
+        available_gap = min(gap, current.start - previous.end)
+        current.ev_start = max(current.ev_start, previous.end + available_gap)
+        previous.ev_end = min(previous.ev_end, current.ev_start - available_gap)
+        # Minimum display duration is also padding, not permission to mask
+        # the following line. A short sung interjection stays a short event.
+        previous.ev_end = max(previous.end, previous.ev_end)
 
 
 def check_windows(lines: list[KaraokeLine], min_gap_ms: float = 1.0) -> dict:
     """自检：事件窗是否真的不重叠、token 是否单调。"""
     gap = min_gap_ms / 1000.0
-    overlaps, nonmono = [], []
+    overlaps, nonmono, clipped = [], [], []
     for i in range(len(lines) - 1):
         if lines[i].ev_end > lines[i + 1].ev_start + 1e-6:
             overlaps.append(i)
     for i, ln in enumerate(lines):
+        if ln.ev_start > ln.start + 1e-6 or ln.ev_end < ln.end - 1e-6:
+            clipped.append(i)
         prev = -1e9
         for t in ln.tokens:
             if t.start + 1e-6 < prev:
@@ -219,7 +218,8 @@ def check_windows(lines: list[KaraokeLine], min_gap_ms: float = 1.0) -> dict:
         "overlap_pairs": overlaps,
         "nonmonotonic_lines": sorted(set(nonmono)),
         "zero_duration_events": bad_dur,
-        "ok": not overlaps and not nonmono and not bad_dur,
+        "clipped_singing_lines": clipped,
+        "ok": not overlaps and not nonmono and not bad_dur and not clipped,
     }
 
 
@@ -300,11 +300,11 @@ def _karaoke_body(ln: KaraokeLine, opt: AssOptions, ev_start: float,
 
 
 def _fmt_time(sec: float) -> str:
-    sec = max(0.0, sec)
-    h = int(sec // 3600)
-    m = int((sec % 3600) // 60)
-    s = sec % 60
-    return f"{h:d}:{m:02d}:{s:05.2f}"
+    ticks = max(0, round(sec * 100))
+    seconds, fraction = divmod(ticks, 100)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:d}:{minutes:02d}:{seconds:02d}.{fraction:02d}"
 
 
 def build_ass(lines: list[KaraokeLine], opt: AssOptions,
@@ -325,9 +325,19 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
     ol = ass_color(opt.outline_color)
     bold = -1 if opt.bold else 0
     line_count = max(1, min(3, int(opt.line_count))) if opt.next_line else 1
-    x = round(width * max(0, min(100, int(opt.position_x))) / 100)
-    y = round(height * max(0, min(100, int(opt.position_y))) / 100)
+    base_x = max(0, min(100, int(opt.position_x)))
+    base_y = max(0, min(100, int(opt.position_y)))
+    x = round(width * base_x / 100)
+    y = round(height * base_y / 100)
     line_step = max(fs * 1.1, next_fs * 1.4)
+    positions = []
+    for slot in range(3):
+        if opt.line_positions and slot < len(opt.line_positions):
+            px, py = opt.line_positions[slot]
+            positions.append((round(width * max(0.0, min(100.0, float(px))) / 100),
+                              round(height * max(0.0, min(100.0, float(py))) / 100)))
+        else:
+            positions.append((x, min(height, round(y + line_step * slot))))
 
     head = [
         "[Script Info]",
@@ -364,17 +374,16 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
         body = _karaoke_body(ln, opt, ln.ev_start, width, fs)
         events.append(
             f"Dialogue: 0,{_fmt_time(ln.ev_start)},{_fmt_time(ln.ev_end)},"
-            f"LYRIC,,0,0,0,,{{\\an2\\pos({x},{y})}}{body}"
+            f"LYRIC,,0,0,0,,{{\\an2\\pos({positions[0][0]},{positions[0][1]})}}{body}"
         )
         for ahead in range(1, line_count):
             if i + ahead >= n:
                 break
             nxt = lines[i + ahead]
             txt = esc_text(nxt.raw or nxt.text)
-            next_y = min(height, round(y + line_step * ahead))
             events.append(
                 f"Dialogue: -{ahead},{_fmt_time(ln.ev_start)},{_fmt_time(ln.ev_end)},"
-                f"NEXT,,0,0,0,,{{\\an2\\pos({x},{next_y})}}{txt}"
+                f"NEXT,,0,0,0,,{{\\an2\\pos({positions[ahead][0]},{positions[ahead][1]})}}{txt}"
             )
     return "\n".join(head + events) + "\n"
 
@@ -394,14 +403,11 @@ def build_srt(lines: list[KaraokeLine]) -> str:
 
 
 def _srt_time(sec: float) -> str:
-    sec = max(0.0, sec)
-    h = int(sec // 3600)
-    m = int((sec % 3600) // 60)
-    s = int(sec % 60)
-    ms = int(round((sec - int(sec)) * 1000))
-    if ms == 1000:
-        s, ms = s + 1, 0
-    return f"{h:02d}:{m:02d}:{s:02d},{ms:03d}"
+    ticks = max(0, round(sec * 1000))
+    seconds, fraction = divmod(ticks, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds:02d},{fraction:03d}"
 
 
 # --------------------------------------------------------------------------

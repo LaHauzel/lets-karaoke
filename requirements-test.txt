@@ -1,0 +1,7 @@
+# CPU regression/CI dependencies; no GPU models are downloaded.
+-r requirements-base.txt
+soundfile>=0.13,<0.14
+librosa>=0.11,<0.12
+requests>=2.32,<3
+pykakasi==2.3.0
+webrtcvad-wheels>=2.0.14,<3
