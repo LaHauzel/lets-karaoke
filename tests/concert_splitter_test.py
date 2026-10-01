@@ -3,6 +3,7 @@ import hashlib
 import http.client
 import importlib.util
 import json
+import copy
 import os
 import subprocess
 import sys
@@ -339,6 +340,90 @@ class ConcertRecordTests(unittest.TestCase):
         self.assertEqual(concert.get_job(second['id'])['id'], first['id'])
         self.assertEqual(list(concert.ROOT.glob('*/*.tmp')), [])
 
+    def test_migration_syncs_latest_revision_and_default_view(self):
+        first = self.seed('1111111111111111', revision=1, edited=True)
+        second = self.seed('2222222222222222', 2, revision=3, edited=True,
+                           segments=[{'title': 'latest edit', 'start': 2., 'end': 110., 'selected': True}])
+        concert.migrate_legacy_records()
+        concert.JOBS.clear()
+        job = concert.snapshot(first['id'])
+        view = concert.job_view(job)
+        self.assertEqual((job['analysis_version'], job['revision'], job['edited']), (2, 3, True))
+        self.assertEqual((view['selected_version'], view['revision'], view['segments'][0]['title']),
+                         (2, 3, 'latest edit'))
+        code, saved = self.post('save', {'id': view['id'], 'version': view['selected_version'],
+                                       'revision': view['revision'], 'segments': view['segments']})
+        self.assertEqual(code, 200)
+        self.assertEqual(saved['revision'], 4)
+        self.assertEqual(concert.job_view(concert.snapshot(first['id']), 1)['revision'], 1)
+
+    def test_old_alias_without_mapping_recovers_even_after_newer_edits(self):
+        first = self.seed('1111111111111111')
+        second = self.seed('2222222222222222', 2,
+                           segments=[{'title': 'second original', 'start': 3., 'end': 117., 'selected': True}])
+        concert.migrate_legacy_records()
+        canonical = concert.get_job(first['id'])
+        concert.save_version_segments(canonical,
+                                     [{'title': 'canonical saved edit', 'start': 4., 'end': 116., 'selected': True}], 2)
+        alias = concert.JOBS[second['id']]
+        alias.pop('merged_versions')
+        for version in canonical['analysis_versions']:
+            version.pop('origin_id', None)
+            version.pop('origin_version', None)
+        # Simulate an old migration with a stale root and only merged_into.
+        canonical.update(revision=0, edited=False)
+        concert.persist(alias)
+        concert.persist(canonical)
+        concert.JOBS.clear()
+        job, number = concert.resolve_job_version(second['id'], 1)
+        view = concert.job_view(job, number)
+        self.assertEqual((job['id'], number, view['revision']), (first['id'], 2, 1))
+        self.assertEqual(view['segments'][0]['title'], 'canonical saved edit')
+        self.assertEqual(json.loads((concert.directory(second['id'])/'concert.json').read_text(encoding='utf-8'))
+                         ['merged_versions'], {'1': 2})
+        # An old editor is still subject to the correctly mapped revision check.
+        self.assertEqual(self.post('save', {'id': second['id'], 'version': 1, 'revision': 0,
+                                           'segments': second['segments']})[0], 400)
+        self.assertEqual(concert.job_view(concert.snapshot(first['id']), 1)['segments'][0]['title'], 'original')
+
+    def test_alias_version_mapping_composes_across_multiple_merges(self):
+        first = self.seed('1111111111111111', revision=1, edited=True)
+        second = self.seed('2222222222222222', 2, revision=1, edited=True,
+                           segments=[{'title': 'second saved', 'start': 3., 'end': 117., 'selected': True}])
+        folder = concert.directory(second['id'])/'export-abcd'
+        folder.mkdir()
+        second['exports'] = [{'id': 'export-abcd', 'files': [], 'version': 1, 'owner_id': second['id'],
+                              'mode': 'copy', 'path': str(folder)}]
+        concert.persist(second)
+        concert.migrate_legacy_records()
+        earliest = self.seed('0000000000000000', 0)
+        concert.migrate_legacy_records()
+        job, version = concert.resolve_job_version(second['id'], 1)
+        self.assertEqual((job['id'], version), (earliest['id'], 3))
+        self.assertEqual(job['exports'][0]['version'], 3)
+        self.assertEqual(concert.export_directory(job, job['exports'][0]), folder)
+        code, saved = self.post('save', {'id': second['id'], 'version': 1, 'revision': 1,
+                                       'segments': [{'title': 'alias edit', 'start': 3., 'end': 116.}]})
+        self.assertEqual((code, saved['selected_version']), (200, 3))
+        self.assertEqual(concert.job_view(concert.snapshot(earliest['id']), 2)['segments'][0]['title'], 'original')
+
+    def test_ambiguous_old_alias_mapping_refuses_to_guess(self):
+        first = self.seed('1111111111111111')
+        second = self.seed('2222222222222222', 1)
+        concert.migrate_legacy_records()
+        alias = concert.JOBS[second['id']]
+        alias.pop('merged_versions')
+        canonical = concert.get_job(first['id'])
+        for version in canonical['analysis_versions']:
+            version.pop('origin_id', None)
+            version.pop('origin_version', None)
+        concert.persist(alias)
+        concert.persist(canonical)
+        with self.assertRaisesRegex(ValueError, '无法唯一确认'):
+            concert.resolve_job_version(second['id'], 1)
+        self.assertEqual(self.post('save', {'id': second['id'], 'version': 1, 'revision': 0,
+                                           'segments': second['segments']})[0], 400)
+
     def test_reanalysis_reuses_cache_and_rejects_changed_source(self):
         job = self.seed('1111111111111111', state='analyzing')
         values = (np.full(120, -15.), np.ones((120, 20)), None)
@@ -598,6 +683,237 @@ class ConcertHttpTests(unittest.TestCase):
         self.assertEqual(len(job['exports'][-1]['files']), 2)
         self.assertEqual((first.stat().st_mtime_ns, hashlib.sha256(first.read_bytes()).hexdigest()), initial)
         self.assertEqual(requests.get(prefix+'manifest.json', timeout=5).json()['state'], 'done')
+
+    def test_completed_duplicate_page_saves_exports_and_reanalyzes_its_mapped_version(self):
+        source = self.root/'alias workflow.mp4'
+        source.write_bytes(self.source.read_bytes())
+        first = self.post('analyze', {'source': str(source)}).json()['id']
+        self.assertEqual(self.wait(first)['state'], 'ready')
+        first_segments = [{'title': 'first saved', 'start': .2, 'end': 2., 'selected': True}]
+        response = self.post('save', {'id': first, 'version': 1, 'revision': 0, 'segments': first_segments})
+        self.assertEqual(response.status_code, 200, response.text)
+        second = self.post('analyze', {'source': str(source), 'sensitivity': 'sensitive',
+                                      'min_length': 30}).json()['id']
+        self.assertEqual(self.wait(second)['state'], 'ready')
+        second_segments = [{'title': 'second saved', 'start': 2.5, 'end': 4., 'selected': True}]
+        response = self.post('save', {'id': second, 'version': 1, 'revision': 0, 'segments': second_segments})
+        self.assertEqual(response.status_code, 200, response.text)
+        stale_page = response.json()
+        # The completed page still has the original second-record/v1 identity
+        # when the history request coalesces its record into canonical v2.
+        self.assertEqual(requests.get(self.base+'/api/concert/jobs', timeout=5).status_code, 200)
+        view = requests.get(self.base+'/api/concert/job', params={'id': second}, timeout=5).json()
+        self.assertEqual((view['id'], view['selected_version'], view['revision']), (first, 2, 1))
+        explicit = requests.get(self.base+'/api/concert/job', params={'id': second, 'version': 1}, timeout=5).json()
+        self.assertEqual(explicit['selected_version'], 2)
+        second_segments[0]['title'] = 'second page adjusted'
+        response = self.post('save', {'id': stale_page['id'], 'version': 1,
+                                     'revision': stale_page['revision'], 'segments': second_segments})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['selected_version'], 2)
+        first_view = requests.get(self.base+'/api/concert/job', params={'id': first, 'version': 1}, timeout=5).json()
+        self.assertEqual((first_view['segments'], first_view['revision']), (first_segments, 1))
+        # Both the exported cut and its version label must use the translated
+        # alias version, and reanalysis must preserve both saved snapshots.
+        response = self.post('export', {'id': second, 'version': 1, 'revision': 2,
+                                       'segments': second_segments, 'mode': 'precise'})
+        self.assertEqual(response.status_code, 202, response.text)
+        self.assertEqual((response.json()['id'], response.json()['version']), (first, 2))
+        done = self.wait(first)
+        self.assertEqual(done['state'], 'done', done)
+        self.assertEqual(done['exports'][-1]['version'], 2)
+        output = Path(done['exports'][-1]['path'])/done['exports'][-1]['files'][0]['file']
+        self.assertAlmostEqual(splitter.probe(output)['duration'], 1.5, delta=.08)
+        response = self.post('reanalyze', {'id': second})
+        self.assertEqual(response.status_code, 202, response.text)
+        latest = self.wait(first)
+        self.assertEqual((latest['analysis_version'], latest['sensitivity'], latest['min_length']), (3, 'sensitive', 30))
+        self.assertEqual(latest['analysis_versions'][0]['segments'], first_segments)
+        self.assertEqual(latest['analysis_versions'][1]['segments'], second_segments)
+        # Exercise actual HTTP loading/saving of a persisted pre-map alias,
+        # after the canonical record has also gained newer analyses and edits.
+        with concert.LOCK:
+            alias = concert.JOBS[second]
+            alias.pop('merged_versions')
+            canonical = concert.get_job(first)
+            for version in canonical['analysis_versions']:
+                version.pop('origin_id', None)
+                version.pop('origin_version', None)
+            concert.persist(alias)
+            concert.persist(canonical)
+            concert.JOBS.pop(first)
+            concert.JOBS.pop(second)
+        old_alias = requests.get(self.base+'/api/concert/job', params={'id': second, 'version': 1}, timeout=5).json()
+        self.assertEqual((old_alias['id'], old_alias['selected_version'], old_alias['revision']), (first, 2, 3))
+        response = self.post('save', {'id': second, 'version': 1, 'revision': 3, 'segments': second_segments})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()['selected_version'], 2)
+        final_first = requests.get(self.base+'/api/concert/job', params={'id': first, 'version': 1}, timeout=5).json()
+        self.assertEqual((final_first['segments'], final_first['revision']), (first_segments, 1))
+
+    def test_publication_after_rename_recovers_without_reencoding_and_refuses_changed_plan(self):
+        source = self.root/'publication workflow.mp4'
+        source.write_bytes(self.source.read_bytes())
+        identifier = self.post('analyze', {'source': str(source)}).json()['id']
+        self.assertEqual(self.wait(identifier)['state'], 'ready')
+        segments = [{'title': 'published', 'start': .5, 'end': 1.5, 'selected': True}]
+        original_rename = Path.rename
+        def stop_after_rename(path, target):
+            result = original_rename(path, target)
+            if '.partial.' in path.name:
+                raise OSError('simulated interruption after final rename')
+            return result
+        with patch.object(Path, 'rename', stop_after_rename):
+            response = self.post('export', {'id': identifier, 'segments': segments, 'mode': 'precise'})
+            self.assertEqual(response.status_code, 202, response.text)
+            failed = self.wait(identifier)
+        self.assertEqual(failed['state'], 'error', failed)
+        export = failed['exports'][-1]
+        folder = Path(export['path'])
+        manifest_path, journal_path = folder/'manifest.json', folder/'publication.json'
+        manifest = json.loads(manifest_path.read_text(encoding='utf-8'))
+        journal = json.loads(journal_path.read_text(encoding='utf-8'))
+        self.assertEqual(manifest['segments'], [])
+        self.assertEqual(export['files'], [])
+        target = folder/journal['file']['file']
+        initial = (target.stat().st_mtime_ns, hashlib.sha256(target.read_bytes()).hexdigest())
+        url = self.base+f'/concert-files/{identifier}/{export["id"]}/'+requests.utils.quote(target.name)
+        self.assertEqual(requests.get(url, timeout=5).status_code, 404)
+        for metadata_path, original in ((manifest_path, manifest), (journal_path, journal)):
+            for field, changed in [('source_identity', {}), ('planned_segments', []), ('mode', 'copy'),
+                                   ('source', str(self.source))]:
+                damaged = copy.deepcopy(original)
+                damaged[field] = changed
+                metadata_path.write_text(json.dumps(damaged), encoding='utf-8')
+                response = self.post('resume-export', {'id': identifier, 'export_id': export['id']})
+                self.assertEqual(response.status_code, 400, response.text)
+                self.assertEqual(concert.snapshot(identifier)['state'], 'error')
+                metadata_path.write_text(json.dumps(original), encoding='utf-8')
+        # Reload persisted state, and ensure validated adoption does no FFmpeg
+        # work and preserves the exact already-published file.
+        concert.JOBS.pop(identifier)
+        with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected reencoding')), \
+                patch.object(splitter, '_file_sha256', wraps=splitter._file_sha256) as hashes:
+            response = self.post('resume-export', {'id': identifier, 'export_id': export['id']})
+            self.assertEqual(response.status_code, 202, response.text)
+            done = self.wait(identifier)
+            self.assertEqual(hashes.call_count, 1)
+        self.assertEqual(done['state'], 'done', done)
+        self.assertEqual(len(done['exports'][-1]['files']), 1)
+        self.assertEqual((target.stat().st_mtime_ns, hashlib.sha256(target.read_bytes()).hexdigest()), initial)
+        self.assertFalse(journal_path.exists())
+        self.assertEqual(requests.get(url, timeout=5).status_code, 200)
+
+    def test_publication_before_rename_recovers_and_unverified_orphans_are_refused(self):
+        segments = [{'title': 'clip', 'start': .5, 'end': 1.5, 'selected': True}]
+        identity = splitter.source_identity(self.source)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)/'before-rename'
+            original_rename = Path.rename
+            def stop_before_rename(path, target):
+                if '.partial.' in path.name:
+                    raise OSError('simulated interruption before final rename')
+                return original_rename(path, target)
+            with patch.object(Path, 'rename', stop_before_rename):
+                with self.assertRaises(OSError):
+                    splitter.export_segments(self.source, segments, folder, 'precise', expected_identity=identity)
+            self.assertTrue((folder/'01_clip.partial.mp4').is_file())
+            with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected reencoding')), \
+                    patch.object(splitter, '_file_sha256', wraps=splitter._file_sha256) as hashes:
+                files = splitter.export_segments(self.source, segments, folder, 'precise',
+                                                 completed_files=[], expected_identity=identity)
+                self.assertEqual(hashes.call_count, 1)
+            self.assertEqual(len(files), 1)
+            self.assertAlmostEqual(splitter.probe(folder/files[0]['file'])['duration'], 1., delta=.08)
+            self.assertFalse((folder/'publication.json').exists())
+            orphan_folder = Path(tmp)/'orphan'
+            with self.assertRaises(splitter.Cancelled):
+                splitter.export_segments(self.source, segments, orphan_folder, 'precise',
+                                         cancelled=lambda: True, expected_identity=identity)
+            # Even a playable unrelated media file must not be called a
+            # completed cut merely because its final filename already exists.
+            orphan = orphan_folder/'01_clip.mp4'
+            orphan.write_bytes(self.source.read_bytes())
+            original = orphan.read_bytes()
+            with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected encoding')):
+                with self.assertRaisesRegex(ValueError, '未登记'):
+                    splitter.export_segments(self.source, segments, orphan_folder, 'precise',
+                                             completed_files=[], expected_identity=identity)
+            self.assertEqual(orphan.read_bytes(), original)
+            self.assertEqual(json.loads((orphan_folder/'manifest.json').read_text(encoding='utf-8'))['segments'], [])
+
+    def test_recovery_reuses_one_full_hash_when_publication_and_manifest_overlap(self):
+        segments = [{'title': 'clip', 'start': .5, 'end': 1.5, 'selected': True}]
+        identity = splitter.source_identity(self.source)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)/'overlapping-publication'
+            original_rename = Path.rename
+            def stop_after_rename(path, target):
+                result = original_rename(path, target)
+                if '.partial.' in path.name:
+                    raise OSError('simulated interruption after rename')
+                return result
+            with patch.object(Path, 'rename', stop_after_rename):
+                with self.assertRaises(OSError):
+                    splitter.export_segments(self.source, segments, folder, 'precise', expected_identity=identity)
+            journal = json.loads((folder/'publication.json').read_text(encoding='utf-8'))
+            manifest = json.loads((folder/'manifest.json').read_text(encoding='utf-8'))
+            # This also occurs when the manifest was published but its record
+            # callback/journal cleanup was interrupted.
+            manifest['segments'] = [journal['file']]
+            (folder/'manifest.json').write_text(json.dumps(manifest), encoding='utf-8')
+            with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected reencoding')), \
+                    patch.object(splitter, '_file_sha256', wraps=splitter._file_sha256) as hashes:
+                files = splitter.export_segments(self.source, segments, folder, 'precise',
+                                                 completed_files=manifest['segments'], expected_identity=identity)
+            self.assertEqual(hashes.call_count, 1)
+            self.assertEqual(files, manifest['segments'])
+
+    def test_file_changed_after_initial_resume_verification_is_refused(self):
+        segments = [{'title': 'first', 'start': .5, 'end': 1.5, 'selected': True},
+                    {'title': 'second', 'start': 3., 'end': 4., 'selected': True}]
+        identity = splitter.source_identity(self.source)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)/'changed-during-resume'
+            files = splitter.export_segments(self.source, segments, folder, 'precise', expected_identity=identity)
+            second = folder/files[1]['file']
+            def mutate_next(value):
+                if value['file'] == files[0]['file']:
+                    stat, contents = second.stat(), second.read_bytes()
+                    second.write_bytes(b'changed!'+contents[8:])
+                    os.utime(second, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected reencoding')), \
+                    patch.object(splitter, '_file_sha256', wraps=splitter._file_sha256) as hashes:
+                with self.assertRaisesRegex(ValueError, '已改变'):
+                    splitter.export_segments(self.source, segments, folder, 'precise', completed_files=files,
+                                             expected_identity=identity, on_complete=mutate_next)
+            self.assertEqual(hashes.call_count, 2)  # Exactly once for each completed file.
+
+    def test_recovery_refuses_published_file_replaced_after_interruption(self):
+        segments = [{'title': 'clip', 'start': .5, 'end': 1.5, 'selected': True}]
+        identity = splitter.source_identity(self.source)
+        with tempfile.TemporaryDirectory() as tmp:
+            folder = Path(tmp)/'changed-publication'
+            original_rename = Path.rename
+            def stop_after_rename(path, target):
+                result = original_rename(path, target)
+                if '.partial.' in path.name:
+                    raise OSError('simulated interruption after rename')
+                return result
+            with patch.object(Path, 'rename', stop_after_rename):
+                with self.assertRaises(OSError):
+                    splitter.export_segments(self.source, segments, folder, 'precise', expected_identity=identity)
+            target = folder/'01_clip.mp4'
+            stat, contents = target.stat(), target.read_bytes()
+            target.write_bytes(b'changed!'+contents[8:])
+            os.utime(target, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+            original_manifest = (folder/'manifest.json').read_bytes()
+            with patch.object(splitter, '_launch', side_effect=AssertionError('unexpected encoding')):
+                with self.assertRaises(ValueError):
+                    splitter.export_segments(self.source, segments, folder, 'precise',
+                                             completed_files=[], expected_identity=identity)
+            self.assertEqual((folder/'manifest.json').read_bytes(), original_manifest)
+            self.assertTrue((folder/'publication.json').exists())
 
     def test_cancel_and_exclusion(self):
         started=threading.Event()

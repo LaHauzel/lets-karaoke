@@ -57,7 +57,7 @@ setup_venv.bat whisper
 webui_venv.bat
 ```
 
-将 `whisper` 换成 `concert`、`qwen`、`sofa` 或 `full` 可选择相应依赖组合。虚拟环境保存在 `.venv/`；其中的模型下载命令也应使用 `.venv\Scripts\python.exe`。存在 `.venv` 时，`webui.bat`、`test.bat` 和 `setup_guide.bat` 会自动使用它。
+将 `whisper` 换成 `concert`、`qwen`、`sofa` 或 `full` 可选择相应依赖组合。虚拟环境保存在 `.venv/`；其中的模型下载命令也应使用 `.venv\Scripts\python.exe`。存在 `.venv` 时，启动、测试和安装入口都会优先使用它，包括直接运行 `setup_profile.bat` 或兼容入口 `setup.bat`，避免依赖被装到另一个 Python 中。
 
 本机默认 Python 不是 3.11 时（例如已有 3.12 供其他项目使用），推荐使用虚拟环境，无需改动系统默认 Python：
 
@@ -68,7 +68,7 @@ rem 关闭并重新打开命令行，让 winget 写入的 PATH 生效
 setup_venv.bat whisper
 ```
 
-`setup_venv.bat` 会优先使用 PATH 中的 3.11，找不到时通过 `py -3.11` 创建 `.venv`；已有 `.venv` 不是 3.11 时会提示先改名或删除。注意 Python 安装程序可能把 3.11 放到用户 PATH 最前面，从而改变其他项目使用的默认 `python`，安装后可用 `python --version` 确认，必要时在“编辑账户的环境变量”中调整顺序。首次安装 GPU profile 需要下载约 2.9 GB 的 CUDA 版 PyTorch，pip 在输出被重定向时可能长时间不显示进度。
+`setup_venv.bat` 先检查并复用已有的 Python 3.11 `.venv`，此时不要求 PATH 中有系统 Python；需要新建时，优先使用 PATH 中的 3.11，找不到时通过 `py -3.11` 创建。已有 `.venv` 不是 3.11 时会提示先改名或删除。注意 Python 安装程序可能把 3.11 放到用户 PATH 最前面，从而改变其他项目使用的默认 `python`，安装后可用 `python --version` 确认，必要时在“编辑账户的环境变量”中调整顺序。首次安装 GPU profile 需要下载约 2.9 GB 的 CUDA 版 PyTorch，pip 在输出被重定向时可能长时间不显示进度。
 
 Windows 用户建议运行 `setup_guide.bat`。它按以下顺序提供可选环境，并在每一步说明功能和显示安装进度：
 
@@ -147,6 +147,10 @@ python src\webui.py --port 8000 --no-open
 
 没有歌词时可以使用“自动转写”生成草稿。ASR 结果只应作为初稿，建议校正文案和分行后再进行已知歌词对齐。
 
+增强 LRC 会保留明确的逐词起止，包括行尾空时间标记。选择忽略输入时间时会重新对齐，并按设置进行人声分离；Whisper、SOFA 或 ASR 前置流程新生成的时间仍会被后续出片采纳。没有内置音轨的视频可配合独立音轨使用。
+
+人工改字和插入歌词会保存到当前版本的校验基准，后续样式调整和草稿恢复会延续该基准；原始输入保留用于追溯，模型实际漏掉的原句仍会提示。所有歌词来源均不可用时，页面会说明缺少的环境并禁用生成，历史编辑仍可使用。
+
 ## 演唱会分段流程
 
 1. 输入本机视频的完整路径。支持 MP4、MKV、MOV、AVI、WebM、M4V、TS 和 MTS 容器；视频必须包含可读取的画面、时长和音轨。
@@ -159,6 +163,8 @@ python src\webui.py --port 8000 --no-open
 6. 文件位于 `out/concert/<任务编号>/export-<批次编号>/`，每批包含 `manifest.json`；记录和版本保存在对应的 `concert.json` 中。
 
 原视频不会被修改。取消导出只会清理尚未完成的片段，已完成文件仍保留在当前批次。
+
+导出会在发布片段前保存恢复日志，并对成片计算完整 SHA-256；中断后可验证并继续已完成片段，校验会增加一次完整文件读取。来源、计划或文件被改动时会要求新建批次。旧版遗留且没有有效清单或恢复日志的孤立文件无法自动确认来源。
 
 ## 数据位置与隐私
 

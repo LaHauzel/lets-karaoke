@@ -1,13 +1,15 @@
 # 发布检查清单
 
-- [x] 2026-10-01本机 `test.bat`：146项Python回归、ASR自检通过；Node11项通过
-- [x] 本机GPU合成8/8通过覆盖、结构、文件与P90回归门槛
+- [x] 2026-10-01本机 Python3.11：187项Python回归无跳过、ASR自检通过；Node状态机11项及能力限制9项通过
+- [x] 现有Python3.13 `.venv`：182项通过、5项仅3.11的安装回归跳过；这些安装测试已在上项通过
+- [x] Python3.11与现有`.venv`分别GPU合成8/8通过覆盖、结构、文件与P90回归门槛，最差211.56ms
 - [x] 关键浏览器路径通过：批量刷新、草稿恢复、异步出片、版本回退
 - [x] README/中英安装指南明确已验证Python3.11、GPU组合和可选虚拟环境
 - [x] 模型、媒体、缓存、运行结果与私人审计产物由 `.gitignore` 排除
 - [x] 直接依赖/模型许可边界、可选GPL组件已记录
 - [x] 远端Windows/CPU/Node [Actions实际运行通过](https://github.com/LaHauzel/lets-karaoke/actions/runs/36805697316)：146项中145通过、1项可选YAMNet跳过；该项已本机通过
-- [ ] 全新Windows按文档安装、模型下载和GPU短片测试通过
+- [x] 第二台Windows按README新建3.11 `.venv`，Whisper/concert安装检查与Whisper+Demucs GPU短片通过
+- [ ] 完整Qwen/SOFA环境在全新Windows按文档安装、模型下载和GPU短片测试通过
 - [ ] 有授权真实歌声及演唱会边界真值集达到发布质量目标
 - [ ] 正式二进制分发生成锁定环境依赖/许可证/NOTICE清单
 - [ ] 发布包核对只包含通用代码、许可素材及必要文档

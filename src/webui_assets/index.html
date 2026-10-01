@@ -242,6 +242,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <button data-v="asr">③ 没歌词 · 自动转写</button>
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
+      <div class="hint" id="sourceAvailability" role="status">正在检查本机功能…</div>
       <div id="whisperOpts"
            style="font-size:12.5px;color:var(--tx2);margin:-2px 0 9px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -492,7 +493,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
   <div>
     <div class="card">
       <h2><span class="n">3</span>生成</h2>
-      <button class="primary" id="btnRun">开始生成卡拉OK</button>
+      <button class="primary" id="btnRun" disabled>开始生成卡拉OK</button>
       <div class="barwrap" style="margin-top:12px">
         <div class="lbl"><span id="stageTxt">待开始</span><span id="pctTxt">0%</span></div>
         <div class="bar"><i id="barFill"></i></div>
@@ -585,6 +586,7 @@ let MEDIA_SWITCHING = false, BATCH_CANCEL_REQUESTED = false;
 let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null, ANCHOR_ROWS = new Set(), EDIT_DRAFT_ID = null;
 let HISTORY = [], EDITABLE = true, EDITING = false, ANCHOR_API_SUPPORTED = false;
 let GENERATION_BUSY = false, EDIT_OPERATION = null, ASYNC_EDIT_SUPPORTED = false, DRAFT_RESTORE_BLOCKED = false;
+let CAPABILITIES = null;
 const TASK_STORE = 'lets-karaoke:pending-tasks';
 let SAVED_TASKS = readLocal(TASK_STORE, {});
 const BATCH_JOBS = new Set();
@@ -673,26 +675,35 @@ boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('�
 
 // 未安装的功能置灰并说明原因，避免提交后才在日志里看到缺少模块。
 function applyCapabilities(caps){
-  if(!caps) return;
+  CAPABILITIES=caps||{};
   for(const src of ['whisper', 'sofa', 'asr']){
-    const cap = caps[src], b = document.querySelector(`#segSrc button[data-v="${src}"]`);
-    if(!cap || cap.ok || !b) continue;
-    b.disabled = true;
-    b.title = cap.reason;
-    b.textContent += '（未安装）';
+    const cap = CAPABILITIES[src], b = document.querySelector(`#segSrc button[data-v="${src}"]`);
+    if(!b)continue;
+    b.dataset.availableLabel ||= b.textContent;
+    b.disabled=cap?.ok!==true;b.title=b.disabled?(cap?.reason||'该歌词来源不可用，请检查安装环境。'):'';
+    b.textContent=b.dataset.availableLabel+(b.disabled?'（未安装）':'');
   }
-  const downloaded = caps.whisper_models || [];
+  const downloaded = CAPABILITIES.whisper_models || [];
   for(const o of $('#whisperModel').options){
-    if(!downloaded.includes(o.value)) o.textContent += ' · 未下载，首次使用自动下载';
+    o.dataset.availableLabel ||= o.textContent;
+    o.textContent=o.dataset.availableLabel+(downloaded.includes(o.value)?'':' · 未下载，首次使用自动下载');
   }
-  for(const [value, cap] of [['qwen', caps.qwen], ['wav2vec2', caps.wav2vec2]]){
+  for(const [value, cap] of [['qwen', CAPABILITIES.qwen], ['wav2vec2', CAPABILITIES.wav2vec2]]){
     const o = $('#backend').querySelector(`option[value="${value}"]`);
-    if(o && cap && !cap.ok){ o.disabled = true; o.textContent += '（未安装）'; o.title = cap.reason; }
+    if(o){o.dataset.availableLabel ||= o.textContent;o.disabled=cap?.ok!==true;o.textContent=o.dataset.availableLabel+(o.disabled?'（未安装）':'');o.title=o.disabled?(cap?.reason||'此后端不可用'):'';}
   }
   const usable = [...$('#backend').options].find(o => !o.disabled);
   if(usable && $('#backend').selectedOptions[0]?.disabled) $('#backend').value = usable.value;
   const current = document.querySelector('#segSrc button.on');
   if(current?.disabled) document.querySelector('#segSrc button:not(:disabled)')?.click();
+  refreshSrcUI();
+}
+function refreshRunAvailability(){
+  const state=TaskClient.generationState(CAPABILITIES,SRC,EDITING||GENERATION_BUSY);
+  $('#btnRun').disabled=!state.allowed;$('#btnRun').title=state.reason;
+  const source=TaskClient.generationState(CAPABILITIES,SRC);
+  $('#sourceAvailability').textContent=source.reason;
+  $('#sourceAvailability').classList.toggle('hidden',source.allowed);
 }
 
 async function recoverTasks(serverJobs){
@@ -732,7 +743,7 @@ async function restoreWorkspace(){
 function seg(id, cb){
   const box = $(id);
   box.addEventListener('click', e => {
-    const b = e.target.closest('button'); if(!b) return;
+    const b = e.target.closest('button'); if(!b||b.disabled) return;
     [...box.children].forEach(x => x.classList.toggle('on', x === b));
     cb(b.dataset.v);
   });
@@ -772,6 +783,7 @@ function refreshSrcUI(){
   $('#asrHint').classList.toggle('hidden', !(SRC === 'asr' && LANG === 'auto'));
   $('#whisperNeedLyrics').classList.toggle('hidden',
       !((SRC === 'whisper' || SRC === 'sofa') && !hasLyrics));
+  refreshRunAvailability();
 }
 $('#lyrics').addEventListener('input', refreshSrcUI);
 $('#lyricsFile').addEventListener('change', refreshSrcUI);
@@ -940,7 +952,7 @@ $('#mediaFolder').addEventListener('change', e => {
 });
 async function importConcertMedia(data){
   const label=$('#fnMedia');
-  if($('#btnRun').disabled){label.textContent='当前有任务正在运行，请等待完成后再导入。';return;}
+  if(GENERATION_BUSY||EDITING){label.textContent='当前有任务正在运行，请等待完成后再导入。';return;}
   try{
     const url=new URL(data.url||'',location.origin);
     if(url.origin!==location.origin||!/^\/concert-files\/[a-zA-Z0-9_-]+\/export-[a-f0-9]+\/[^/]+$/.test(url.pathname))
@@ -1152,6 +1164,8 @@ async function startMediaJob(media, config){
 }
 $('#btnRun').addEventListener('click', async () => {
   if(GENERATION_BUSY||EDITING)return;
+  const sourceState=TaskClient.generationState(CAPABILITIES,SRC);
+  if(!sourceState.allowed){refreshRunAvailability();showErr(sourceState.reason);return;}
   captureActiveMediaItem();
   const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
   const queue = items.map(item => item.file);
@@ -1842,7 +1856,7 @@ async function submitEdit(anchorRows=null,insertion=null,retry=false,deferRender
 function setEditBusy(busy){
   EDITING=busy;
   for(const id of ['btnRetry','btnRerender','tuneVersion','btnReset'])$('#'+id).disabled=busy||!EDITABLE;
-  $('#btnRun').disabled=busy||GENERATION_BUSY;
+  refreshRunAvailability();
   $('#tuneBody').querySelectorAll('input,select,button').forEach(i=>i.disabled=busy||GENERATION_BUSY||!EDITABLE);
   $('#btnCancelEdit').classList.toggle('hidden',!busy);$('#btnCancelEdit').disabled=!EDIT_OPERATION;
   $('#btnResumeEdit').classList.toggle('hidden',!readLocal(editFailureKey(JOB),null));$('#btnResumeEdit').disabled=busy||GENERATION_BUSY;

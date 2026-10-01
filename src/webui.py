@@ -121,6 +121,7 @@ class Job:
     kind: str = 'generate'
     storage_dir: Path | None = None
     target_job: str | None = None
+    attempt_id: str = ''
 
     def add(self, frac: float, msg: str) -> None:
         self.progress = max(0.0, min(1.0, float(frac)))
@@ -148,46 +149,58 @@ def atomic_json(path, data):
 
 
 def persist_job(job):
-    atomic_json((job.storage_dir or job.dir)/'history_status.json', {
-        'job': job.id, 'state': job.state, 'progress': job.progress,
-        'error': job.error, 'created': job.created, 'result': job.result,
-        'logs': job.logs, 'kind': job.kind, 'target_job': job.target_job})
+    # Keep the snapshot and replacement ordered with cancellation/retry.
+    # Otherwise an older terminal write can overwrite a newly queued attempt.
+    with LOCK:
+        atomic_json((job.storage_dir or job.dir)/'history_status.json', {
+            'job': job.id, 'state': job.state, 'progress': job.progress,
+            'error': job.error, 'created': job.created, 'result': job.result,
+            'logs': job.logs, 'kind': job.kind, 'target_job': job.target_job,
+            'attempt_id': job.attempt_id})
 
 
 def _queue_worker():
     while not STOP_WORKER.is_set():
         try:
-            job, config = TASK_QUEUE.get(timeout=.5)
+            job, config, attempt_id = TASK_QUEUE.get(timeout=.5)
         except queue.Empty:
             continue
         try:
             with RESOURCE_LOCK:
                 if STOP_WORKER.is_set():
                     return  # Leave this request queued on disk for next startup.
-                if job.cancel_req:
-                    job.state = 'cancelled'
+                with LOCK:
+                    if (JOBS.get(job.id) is not job or job.attempt_id != attempt_id
+                            or job.state != 'queued'):
+                        continue
+                    job.state = 'cancelled' if job.cancel_req else 'running'
                     persist_job(job)
-                elif job.kind == 'edit':
-                    job.state = 'running'
+                    cancelled = job.cancel_req
+                if cancelled:
+                    continue
+                if job.kind == 'edit':
                     job.add(0, '开始调整字幕')
                     job.result = perform_edit(config, job)
-                    job.state, job.progress = 'done', 1.0
-                    persist_job(job)
+                    with LOCK:
+                        job.state, job.progress = 'done', 1.0
+                        persist_job(job)
                 else:
                     _run_job(job, copy.deepcopy(config))
-                if job.state in {'queued', 'running'}:
-                    job.state = 'error'
-                    job.error = '任务没有返回完成状态'
-                    persist_job(job)
+                with LOCK:
+                    if job.attempt_id == attempt_id and job.state in {'queued', 'running'}:
+                        job.state = 'error'
+                        job.error = '任务没有返回完成状态'
+                        persist_job(job)
         except Exception as exc:
-            job.state = 'cancelled' if job.cancel_req else 'error'
-            job.error = f'{type(exc).__name__}: {exc}'
-            try:
-                persist_job(job)
-            except OSError:
-                # Disk exhaustion must not kill the only queue worker. The
-                # in-memory failure remains available to the active browser.
-                traceback.print_exc()
+            with LOCK:
+                if job.attempt_id == attempt_id:
+                    job.state = 'cancelled' if job.cancel_req else 'error'
+                    job.error = f'{type(exc).__name__}: {exc}'
+                    try:
+                        persist_job(job)
+                    except OSError:
+                        # Disk exhaustion must not kill the only queue worker.
+                        traceback.print_exc()
         finally:
             TASK_QUEUE.task_done()
             with LOCK:
@@ -198,14 +211,17 @@ def _queue_worker():
 
 def enqueue_job(job, config):
     global WORKER
-    atomic_json((job.storage_dir or job.dir)/'task_request.json', {
-        'job':job.id, 'directory':str(job.dir), 'kind':job.kind,
-        'created':job.created, 'target_job':job.target_job, 'config':config})
     with LOCK:
+        attempt_id = uuid.uuid4().hex
+        atomic_json((job.storage_dir or job.dir)/'task_request.json', {
+            'job':job.id, 'directory':str(job.dir), 'kind':job.kind,
+            'created':job.created, 'target_job':job.target_job, 'config':config,
+            'attempt_id':attempt_id})
         job.state, job.error, job.cancel_req = 'queued', None, False
+        job.attempt_id = attempt_id
         JOBS[job.id] = job
         job.add(0, '已进入本机处理队列')
-        TASK_QUEUE.put((job, config))
+        TASK_QUEUE.put((job, config, attempt_id))
     with WORKER_LOCK:
         if WORKER is None or not WORKER.is_alive():
             WORKER = threading.Thread(target=_queue_worker, daemon=True, name='karaoke-worker')
@@ -225,7 +241,8 @@ def restore_jobs(start_queued=True):
             job = Job(request['job'], directory, state=status.get('state','interrupted'),
                       created=request.get('created',time.time()), kind=request.get('kind','generate'),
                       storage_dir=path.parent if request.get('kind')=='edit' else None,
-                      target_job=request.get('target_job'))
+                      target_job=request.get('target_job'),
+                      attempt_id=status.get('attempt_id', request.get('attempt_id', '')))
             job.result, job.error, job.logs = status.get('result'), status.get('error'), status.get('logs', [])[-500:]
             job.progress = status.get('progress',0)
             if job.state == 'running':
@@ -285,7 +302,8 @@ def load_saved_job(identifier):
             job = Job(request['job'], directory, state=status.get('state', 'interrupted'),
                 created=request.get('created', time.time()), kind=kind,
                 storage_dir=storage if kind == 'edit' else None,
-                target_job=request.get('target_job'))
+                target_job=request.get('target_job'),
+                attempt_id=status.get('attempt_id', request.get('attempt_id', '')))
             job.result, job.error = status.get('result'), status.get('error')
             job.logs, job.progress = status.get('logs', [])[-500:], status.get('progress', 0)
             if job.state == 'running':
@@ -333,6 +351,7 @@ def perform_edit(data, operation=None):
         if operation:
             operation.add(frac,message)
     out = restyle(directory, req, progress=progress, initial_lines=copy.deepcopy(draft['lines']) if draft else None,
+                  initial_reference=copy.deepcopy(draft.get('acceptance_reference')) if draft else None,
                   cancel=(lambda:operation.cancel_req) if operation else None)
     if req.preview_only:
         lines = out.pop('_draft_lines',None)
@@ -343,7 +362,8 @@ def perform_edit(data, operation=None):
         if isinstance(data.get('line_insertion'),dict):
             insertions.append(copy.deepcopy(data['line_insertion']))
         value = {'job_id':job_id,'job_dir':str(directory),'base_version':base_version,
-                 'lines':lines,'insertions':insertions,'updated':time.time()}
+                 'lines':lines,'insertions':insertions,'updated':time.time(),
+                 'acceptance_reference':copy.deepcopy(out.get('acceptance_reference'))}
         with LOCK:
             EDIT_DRAFTS[draft_id] = value
             atomic_json(OUT_ROOT/'.drafts'/f'{draft_id}.json',{**value,'lines':[asdict(row) for row in lines]})
@@ -378,15 +398,16 @@ def capabilities() -> dict:
             p.suffix in (".safetensors", ".bin") for p in directory.glob("*"))
 
     whisper_dir = model_paths.WHISPER_DIR
+    whisper = has("whisper", "stable_whisper", "torch")
     qwen = has("qwen_asr", "transformers")
     return {
-        "whisper": cap(has("whisper", "stable_whisper", "torch"),
+        "whisper": cap(whisper,
                        "需要 Whisper 字幕环境：运行 setup_guide.bat 选择 [1]"),
         "whisper_models": sorted(p.stem for p in whisper_dir.glob("*.pt")) if whisper_dir.is_dir() else [],
-        "sofa": cap(has("lightning", "textgrid", "pykakasi") and SOFA_CKPT.is_file(),
-                    "需要 SOFA 环境（setup_guide.bat 选择 [4]）并放置 SOFA checkpoint"),
-        "asr": cap(qwen and complete(model_paths.QWEN_ASR_DIR) and complete(model_paths.QWEN_ALIGNER_DIR),
-                   "需要 Qwen 环境（setup_guide.bat 选择 [3]）并下载 ASR 与 ForcedAligner 模型"),
+        "sofa": cap(whisper and has("lightning", "textgrid", "pykakasi") and SOFA_CKPT.is_file(),
+                    "需要 Whisper 前置依赖、SOFA 环境（setup_guide.bat 选择 [4]）及 SOFA checkpoint"),
+        "asr": cap(whisper and qwen and complete(model_paths.QWEN_ASR_DIR) and complete(model_paths.QWEN_ALIGNER_DIR),
+                   "需要 Whisper 前置依赖、Qwen 环境（setup_guide.bat 选择 [3]）及 ASR 与 ForcedAligner 模型"),
         "qwen": cap(qwen and complete(model_paths.QWEN_ALIGNER_DIR),
                     "需要 Qwen 环境并下载 ForcedAligner 模型"),
         "wav2vec2": cap(has("transformers"), "需要 Qwen 环境（含 transformers）"),
@@ -545,7 +566,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             device=cfg_kwargs.get("device", "cuda"),
             out_dir=str(OUT_ROOT),
             job_name=job.id,
-            timed_mode=cfg_kwargs.get("timed_mode", "warp"),
+            timed_mode="warp" if (need_sofa or need_whisper or need_asr) else cfg_kwargs.get("timed_mode", "warp"),
             encoder=cfg_kwargs.get("encoder", "auto"),
             quality=int(cfg_kwargs.get("quality", 21)),
             ass=ass,
@@ -562,13 +583,13 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
                 job.error = res.error
                 for line in res.log[-6:]:
                     job.logs.append(line)
+            persist_job(job)
     except Exception as e:  # noqa: BLE001
         with LOCK:
             job.state = "cancelled" if cancel() else "error"
             job.error = f"{type(e).__name__}: {e}"
             job.logs.append(traceback.format_exc()[-1200:])
-    finally:
-        persist_job(job)
+            persist_job(job)
 
 
 
@@ -1405,9 +1426,9 @@ class Handler(BaseHTTPRequestHandler):
             self.close_connection = True
             return self._json({'error':'正在接收其他媒体，请稍后重试'},429)
         old_timeout = self.connection.gettimeout()
-        staging_root = OUT_ROOT/'.uploads'
-        staging_root.mkdir(parents=True,exist_ok=True)
         try:
+            staging_root = OUT_ROOT/'.uploads'
+            staging_root.mkdir(parents=True,exist_ok=True)
             self.connection.settimeout(60)
             with tempfile.TemporaryDirectory(prefix='upload-',dir=staging_root) as staging:
                 return self._api_run_inner(Path(staging))

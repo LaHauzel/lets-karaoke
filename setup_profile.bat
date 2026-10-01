@@ -1,6 +1,7 @@
 @echo off
 setlocal EnableExtensions
 cd /d "%~dp0"
+if exist "%~dp0.venv\Scripts\python.exe" set "PATH=%~dp0.venv\Scripts;%PATH%"
 chcp 65001 >nul
 set "PYTHONUTF8=1"
 
@@ -27,7 +28,7 @@ echo Requirements: %REQUIREMENTS%
 echo ================================================================
 echo.
 
-python -c "import sys; assert sys.version_info[:2] == (3,11), 'The supported installer requires Python 3.11.x'"
+python -c "import sys; print('Python: '+sys.executable); assert sys.version_info[:2] == (3,11), 'The supported installer requires Python 3.11.x'"
 if errorlevel 1 goto fail
 
 if /i "%PROFILE%"=="concert" goto install_concert

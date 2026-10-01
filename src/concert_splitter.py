@@ -395,6 +395,23 @@ def validate_segments(segments, duration):
     return clean
 
 
+def _file_sha256(path, cancelled):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+            if cancelled():
+                raise Cancelled()
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def verify_export_plan(saved, source, identity, mode, selected):
+    if (not isinstance(saved, dict) or saved.get('source_identity') != identity or
+            saved.get('mode') != mode or saved.get('planned_segments') != selected or
+            str(Path(saved.get('source', '')).resolve()) != str(Path(source).resolve())):
+        raise ValueError('导出来源或计划已改变，请新建导出批次')
+
+
 def export_segments(source, segments, directory, mode, progress=lambda *_: None, cancelled=lambda: False,
                     completed_files=None, on_complete=lambda *_: None, expected_identity=None):
     if mode not in {'copy', 'precise'}:
@@ -404,13 +421,94 @@ def export_segments(source, segments, directory, mode, progress=lambda *_: None,
         raise ValueError('请至少选中一个片段')
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=completed_files is not None)
+    expected_identity = verify_source(source, expected_identity)
     results = []
     previous = {f['file']: f for f in (completed_files or [])}
+    source_path = str(Path(source).resolve())
+    pending_path = directory / 'publication.json'
+
+    def validate_plan(saved):
+        verify_export_plan(saved, source, expected_identity, mode, selected)
+
+    def filename(index, segment):
+        name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', segment['title']).strip(' .')[:80] or '片段'
+        return f'{index+1:02d}_{name}{".mkv" if mode == "copy" else ".mp4"}'
+
+    planned = {filename(i, s): s for i, s in enumerate(selected)}
+    verified = {}
+
+    def stat_key(path):
+        stat = path.stat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+
+    def cache_key(path):
+        return str(path.resolve())
+
+    def verify_record(value, path, require_digest=False):
+        if cancelled():
+            raise Cancelled()
+        segment = planned.get(value.get('file'))
+        if (segment is None or any(value.get(k) != segment[k] for k in ('start', 'end', 'title', 'selected')) or
+                not path.is_file() or path.stat().st_size != value.get('size')):
+            raise ValueError('已完成的导出文件或计划已改变，请新建导出批次')
+        observed = source_identity(path)
+        if value.get('file_identity'):
+            if observed != value['file_identity']:
+                raise ValueError('导出文件已改变，请新建导出批次')
+        elif require_digest:
+            raise ValueError('未登记的导出文件缺少验证依据，请新建导出批次')
+        digest = value.get('sha256')
+        if require_digest and not digest:
+            raise ValueError('未登记的导出文件缺少验证依据，请新建导出批次')
+        if digest:
+            key, current_stat = cache_key(path), stat_key(path)
+            checked = verified.get(key)
+            if checked is not None:
+                if checked['identity'] != observed or checked['stat'] != current_stat:
+                    raise ValueError('导出文件在恢复期间改变，请新建导出批次')
+            else:
+                actual = _file_sha256(path, cancelled)
+                if source_identity(path) != observed or stat_key(path) != current_stat:
+                    raise ValueError('导出文件在校验期间改变，请新建导出批次')
+                checked = {'identity': observed, 'stat': current_stat, 'sha256': actual}
+                verified[key] = checked
+            if checked['sha256'] != digest:
+                raise ValueError('导出文件校验失败，请新建导出批次')
+
+    # Validate persisted provenance before changing any recovery metadata.
+    manifest_path = directory / 'manifest.json'
+    if completed_files is not None and manifest_path.exists():
+        saved = json.loads(manifest_path.read_text(encoding='utf-8'))
+        validate_plan(saved)
+        previous.update({value['file']: value for value in saved.get('segments', [])})
+    for name, value in previous.items():
+        if Path(name).name != name or name not in planned:
+            raise ValueError('导出清单文件名或计划无效')
+        verify_record(value, directory / name)
+    if pending_path.exists():
+        pending = json.loads(pending_path.read_text(encoding='utf-8'))
+        validate_plan(pending)
+        value = pending['file']
+        name = value.get('file')
+        if not isinstance(name, str) or Path(name).name != name or name not in planned:
+            raise ValueError('待发布文件名或计划无效')
+        target = directory / name
+        partial = target.with_name(target.stem + '.partial' + target.suffix)
+        verify_record(value, target if target.exists() else partial, require_digest=True)
+        if not target.exists():
+            partial.rename(target)
+            # Rename keeps the verified bytes/mtime, but changes the pathname
+            # and may update inode ctime on Unix. Reuse the content digest.
+            checked = verified.pop(cache_key(partial))
+            verify_source(target, checked['identity'])
+            checked['stat'] = stat_key(target)
+            verified[cache_key(target)] = checked
+        previous[name] = value
     total = sum(s['end'] - s['start'] for s in selected)
     completed = 0
     def save_manifest(state, error=None):
         published = {**previous, **{f['file']: f for f in results}}
-        manifest = {'source': str(source), 'source_identity': expected_identity, 'mode': mode,
+        manifest = {'source': source_path, 'source_identity': expected_identity, 'mode': mode,
                     'segments': list(published.values()), 'planned_segments': selected, 'state': state,
                     'notice': '快速模式切点受关键帧影响，实际片段可能包含切点前画面。' if mode == 'copy' else '精确重编码导出。'}
         if error:
@@ -424,20 +522,19 @@ def export_segments(source, segments, directory, mode, progress=lambda *_: None,
             if cancelled():
                 raise Cancelled()
             verify_source(source, expected_identity)
-            name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', s['title']).strip(' .')[:80] or '片段'
-            target = directory / f'{i+1:02d}_{name}{".mkv" if mode == "copy" else ".mp4"}'
+            target = directory / filename(i, s)
             if target.name in previous:
                 old = previous[target.name]
-                if (not target.is_file() or target.stat().st_size != old.get('size') or
-                        any(old.get(k) != s[k] for k in ('start', 'end', 'title'))):
-                    raise ValueError('已完成的导出文件已改变，请新建导出批次')
-                if old.get('file_identity'):
-                    verify_source(target, old['file_identity'])
+                verify_record(old, target)
                 results.append(old)
                 completed += s['end'] - s['start']
                 on_complete(old)
                 save_manifest('exporting')
+                if pending_path.exists() and json.loads(pending_path.read_text(encoding='utf-8'))['file']['file'] == target.name:
+                    pending_path.unlink()
                 continue
+            if target.exists():
+                raise ValueError('存在未登记且无法验证的导出文件，请新建导出批次')
             partial = target.with_name(target.stem + '.partial' + target.suffix)
             partial.unlink(missing_ok=True)
             command = ['ffmpeg', '-v', 'error', '-nostdin', '-n', '-ss', str(s['start']), '-i', str(source),
@@ -454,6 +551,7 @@ def export_segments(source, segments, directory, mode, progress=lambda *_: None,
                 process = _launch(command, stdout=log, stderr=log)
                 started = last_change = time.monotonic()
                 last_size, last_fraction = -1, -1
+                prepared = False
                 try:
                     while process.poll() is None:
                         if cancelled():
@@ -479,16 +577,28 @@ def export_segments(source, segments, directory, mode, progress=lambda *_: None,
                     if process.returncode:
                         raise RuntimeError('FFmpeg 导出失败：' + (directory/'ffmpeg.log').read_text(encoding='utf-8', errors='replace')[-900:])
                     verify_source(source, expected_identity)
+                    # Persist a verified publication intent before the final
+                    # rename, so a crash on either side remains recoverable.
+                    result = {**s, 'file': target.name, 'size': partial.stat().st_size,
+                              'file_identity': source_identity(partial), 'sha256': _file_sha256(partial, cancelled)}
+                    verify_source(partial, result['file_identity'])
+                    verify_source(source, expected_identity)
+                    pending = {'source': source_path, 'source_identity': expected_identity, 'mode': mode,
+                               'planned_segments': selected, 'file': result}
+                    temporary = pending_path.with_suffix('.tmp')
+                    temporary.write_text(json.dumps(pending, ensure_ascii=False, indent=2), encoding='utf-8')
+                    temporary.replace(pending_path)
+                    prepared = True
                     partial.rename(target)
                 finally:
                     _stop_process(process)
-                    partial.unlink(missing_ok=True)
-            result = {**s, 'file': target.name, 'size': target.stat().st_size,
-                      'file_identity': source_identity(target)}
+                    if not prepared:
+                        partial.unlink(missing_ok=True)
             results.append(result)
             completed += s['end']-s['start']
             save_manifest('exporting')
             on_complete(result)
+            pending_path.unlink(missing_ok=True)
         save_manifest('done')
     except BaseException as exc:
         save_manifest('cancelled' if isinstance(exc, Cancelled) else 'error', exc)

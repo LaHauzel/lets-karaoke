@@ -119,6 +119,81 @@ class RuntimeTests(unittest.TestCase):
         self.assertEqual(webui.JOBS['first'].state,'interrupted')
         self.assertEqual(webui.JOBS['second'].state,'cancelled')
 
+    def test_cancelled_queue_retry_runs_generation_and_edit_once(self):
+        for kind in ('generate', 'edit'):
+            with self.subTest(kind=kind):
+                started=threading.Event(); release=threading.Event(); order=[]
+                def worker(job,config):
+                    job.state='running'; order.append(job.id)
+                    if job.id==kind+'-first':
+                        started.set(); release.wait(5)
+                    job.state='done'; webui.persist_job(job)
+                def edit(data,operation):
+                    order.append(operation.id)
+                    return {'ok':True,'version':1}
+                first=webui.Job(kind+'-first',self.fixture(kind+'-first'))
+                with patch.object(webui,'_run_job',side_effect=worker), \
+                        patch.object(webui,'perform_edit',side_effect=edit):
+                    try:
+                        webui.enqueue_job(first,{})
+                        self.assertTrue(started.wait(5))
+                        if kind=='edit':
+                            self.fixture('edit-target')
+                            response=requests.post(self.base+'/api/rerender',
+                                json={'job':'edit-target','async':True},timeout=5)
+                            self.assertEqual(response.status_code,202,response.text)
+                            identifier=response.json()['operation_job']
+                        else:
+                            second=webui.Job(kind+'-second',self.fixture(kind+'-second'))
+                            webui.enqueue_job(second,{'media':'synthetic.wav'})
+                            identifier=second.id
+                        original_attempt=webui.JOBS[identifier].attempt_id
+                        self.assertEqual(requests.post(self.base+'/api/cancel',
+                            json={'job':identifier},timeout=5).status_code,200)
+                        response=requests.post(self.base+'/api/resume',json={'job':identifier},timeout=5)
+                        self.assertEqual(response.status_code,202,response.text)
+                        self.assertNotEqual(original_attempt,webui.JOBS[identifier].attempt_id)
+                    finally:
+                        release.set(); webui.TASK_QUEUE.join()
+                self.assertEqual(order,[first.id,identifier])
+                self.assertEqual(webui.JOBS[identifier].state,'done')
+
+    def test_cancelled_queue_item_does_not_recreate_deleted_record(self):
+        started=threading.Event(); release=threading.Event()
+        def worker(job,config):
+            job.state='running'; started.set(); release.wait(5)
+            job.state='done'; webui.persist_job(job)
+        first=webui.Job('first',self.fixture('first'))
+        second=webui.Job('second',self.fixture('second'))
+        with patch.object(webui,'_run_job',side_effect=worker):
+            try:
+                webui.enqueue_job(first,{})
+                self.assertTrue(started.wait(5))
+                webui.enqueue_job(second,{})
+                requests.post(self.base+'/api/cancel',json={'job':second.id},timeout=5).raise_for_status()
+                response=requests.post(self.base+'/api/history/delete',json={'jobs':[second.id]},timeout=5)
+                self.assertEqual(response.status_code,200,response.text)
+                self.assertFalse(second.dir.exists())
+            finally:
+                release.set(); webui.TASK_QUEUE.join()
+        self.assertFalse(second.dir.exists())
+
+    def test_upload_directory_failure_releases_both_slots(self):
+        with patch.object(webui,'UPLOAD_SLOTS',threading.BoundedSemaphore(2)), \
+                patch.object(webui.traceback,'print_exc'):
+            with patch.object(Path,'mkdir',side_effect=OSError('upload directory unavailable')):
+                for _ in range(2):
+                    response=requests.post(self.base+'/api/run',data={'lyrics_text':'a'},
+                        files={'media':('a.wav',b'media')},timeout=5)
+                    self.assertEqual(response.status_code,500,response.text)
+            def worker(job,config):
+                job.state='done'; webui.persist_job(job)
+            with patch.object(webui,'_run_job',side_effect=worker):
+                response=requests.post(self.base+'/api/run',data={'lyrics_text':'a'},
+                    files={'media':('a.wav',b'media')},timeout=5)
+                self.assertEqual(response.status_code,200,response.text)
+                webui.TASK_QUEUE.join()
+
     def test_edit_queue_is_async_and_cancelable(self):
         directory=self.fixture(); started=threading.Event()
         def edit(data,operation):
@@ -160,6 +235,28 @@ class RuntimeTests(unittest.TestCase):
             'job':'task','base_version':1},timeout=5).status_code,404)
         webui.discard_draft(identifier)
         self.assertIsNone(webui.load_draft(identifier))
+
+    def test_edit_draft_restores_server_derived_acceptance_reference(self):
+        from ass_builder import KaraokeLine,KaraokeToken
+        self.fixture()
+        original=[KaraokeLine('hello',[KaraokeToken('hello','hello',1,2)],start=1,end=2)]
+        calls=[]
+        def restyle(directory,request,**kwargs):
+            calls.append(kwargs.get('initial_reference'))
+            return {'preview':True,'_draft_lines':original,
+                    'acceptance_reference':{'source':'user_edits','lines':['hello','retained missing line']}}
+        with patch('pipeline.restyle',side_effect=restyle):
+            response=requests.post(self.base+'/api/rerender',
+                json={'job':'task','async':True,'defer_render':True,'line_texts':{'0':'hello'}},timeout=5)
+            self.assertEqual(response.status_code,202,response.text)
+            webui.TASK_QUEUE.join()
+            draft_id=webui.JOBS[response.json()['operation_job']].result['draft_id']
+            webui.EDIT_DRAFTS.clear()
+            response=requests.post(self.base+'/api/rerender',json={'job':'task','async':True,
+                'defer_render':True,'draft_id':draft_id,'acceptance_reference':['client-forged-reference']},timeout=5)
+            self.assertEqual(response.status_code,202,response.text)
+            webui.TASK_QUEUE.join()
+        self.assertEqual(calls,[None,{'source':'user_edits','lines':['hello','retained missing line']}])
 
     def test_evicted_result_and_retry_state_contract(self):
         directory=self.fixture()

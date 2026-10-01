@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlparse, parse_qs
 
 from concert_splitter import (Cancelled, probe, extract_features, extract_sound_scores,
                               suggest, validate_segments, export_segments, verify_source,
-                              cancel_running_processes)
+                              verify_export_plan, cancel_running_processes)
 from http_support import request_allowed, serve_file as send_media_file
 
 ROOT = Path(__file__).resolve().parents[1] / 'out' / 'concert'
@@ -55,6 +55,30 @@ def persist(job):
             temp.unlink(missing_ok=True)
 
 
+def load_record(identifier):
+    """Load one physical record without following its migration alias."""
+    directory(identifier)
+    if identifier not in JOBS:
+        path = directory(identifier) / 'concert.json'
+        if not path.exists():
+            raise FileNotFoundError('任务不存在')
+        job = json.loads(path.read_text(encoding='utf-8'))
+        if job.get('edited') and not job.get('legacy_versions_migrated'):
+            current = next((v for v in job.get('analysis_versions', [])
+                            if v.get('version') == job.get('analysis_version')), None)
+            if current is not None and current.get('segments') != job.get('segments'):
+                # Older releases saved edits only in the root record.
+                current.update(segments=copy.deepcopy(job.get('segments', [])), edited=True,
+                               revision=int(job.get('revision', 0)))
+        if job['state'] in {'analyzing', 'exporting'} and identifier not in ACTIVE:
+            job.update(state='interrupted', message='服务曾中断；可继续未完成导出或重新分析。')
+            for export in job.get('exports', []):
+                if export.get('state') == 'exporting':
+                    export['state'] = 'interrupted'
+        JOBS[identifier] = job
+    return JOBS[identifier]
+
+
 def get_job(identifier):
     with LOCK:
         seen = set()
@@ -63,30 +87,64 @@ def get_job(identifier):
             if identifier in seen:
                 raise ValueError('任务记录引用循环，请恢复备份')
             seen.add(identifier)
-            if identifier in JOBS:
-                job = JOBS[identifier]
-            else:
-                path = directory(identifier) / 'concert.json'
-                if not path.exists():
-                    raise FileNotFoundError('任务不存在')
-                job = json.loads(path.read_text(encoding='utf-8'))
-                if job.get('edited'):
-                    current = next((v for v in job.get('analysis_versions', [])
-                                    if v.get('version') == job.get('analysis_version')), None)
-                    if current is not None and current.get('segments') != job.get('segments'):
-                        # Older releases saved edits only in the root record.
-                        current.update(segments=copy.deepcopy(job.get('segments', [])), edited=True,
-                                       revision=int(job.get('revision', 0)))
-                if job['state'] in {'analyzing', 'exporting'} and identifier not in ACTIVE:
-                    job.update(state='interrupted', message='服务曾中断；可继续未完成导出或重新分析。')
-                    for export in job.get('exports', []):
-                        if export.get('state') == 'exporting':
-                            export['state'] = 'interrupted'
-                JOBS[identifier] = job
+            job = load_record(identifier)
             target = job.get('merged_into')
             if not target or target == identifier:
+                if job.get('legacy_versions_migrated'):
+                    current = next((v for v in job.get('analysis_versions', [])
+                                    if v.get('version') == job.get('analysis_version')), None)
+                    if current is not None:
+                        job.update({k: copy.deepcopy(v) for k, v in current.items()
+                                    if k not in {'version', 'created', 'origin_id', 'origin_version'}})
+                        job['revision'] = int(current.get('revision', 0))
+                        job['edited'] = bool(current.get('edited'))
                 return job
             identifier = target
+
+
+def legacy_version_map(alias, target):
+    """Recover pre-map aliases from immutable analysis metadata, never guess."""
+    old_versions = alias.get('analysis_versions') or [version_payload(alias, 1)]
+    fields = ('created', 'sensitivity', 'min_length', 'candidates', 'waveform',
+              'speech_ranges', 'method', 'notice', 'source_identity')
+    mapping, used = {}, set()
+    for old in old_versions:
+        available = [v for v in target.get('analysis_versions', []) if int(v['version']) not in used]
+        matches = [v for v in available if v.get('origin_id') == alias['id'] and
+                   v.get('origin_version') == old['version']]
+        if not matches:
+            matches = [v for v in available if all(v.get(k) == old.get(k) for k in fields)]
+        if len(matches) != 1:
+            raise ValueError('旧记录版本映射无法唯一确认，请从历史列表重新打开合并记录')
+        number = int(matches[0]['version'])
+        mapping[str(old['version'])] = number
+        used.add(number)
+    return mapping
+
+
+def resolve_job_version(identifier, version=None):
+    """Resolve both record identity and its original version through aliases."""
+    with LOCK:
+        seen, wanted = set(), int(version) if version is not None else None
+        while True:
+            if identifier in seen:
+                raise ValueError('任务记录引用循环，请恢复备份')
+            seen.add(identifier)
+            record = load_record(identifier)
+            target_id = record.get('merged_into')
+            if not target_id or target_id == identifier:
+                return record, wanted
+            if wanted is None:
+                wanted = int(record.get('analysis_version', 1))
+            mapping = record.get('merged_versions')
+            if not mapping:
+                mapping = legacy_version_map(record, load_record(target_id))
+                record['merged_versions'] = mapping
+                persist(record)
+            if str(wanted) not in mapping:
+                raise ValueError('版本不存在')
+            wanted = int(mapping[str(wanted)])
+            identifier = target_id
 
 
 def active_ids(identifier):
@@ -216,14 +274,14 @@ def _migrate_legacy_records_locked():
             version_counter = 0
         exports = []
         version_maps = {}
-        for raw in all_records:
+        for raw in sorted(all_records, key=lambda record: bool(record.get('merged_into'))):
             for value in raw.get('exports') or []:
                 value = copy.deepcopy(value)
                 if not value.get('owner_id'):
                     legacy = Path(value.get('path') or '').resolve()
                     value['owner_id'] = (legacy.parent.name if legacy.is_relative_to(ROOT.resolve())
                                          and legacy.name == value.get('id') else raw['id'])
-                exports.append(value)
+                exports.append((raw['id'], value))
         for raw in records[1:] if canonical.get('legacy_versions_migrated') else records:
             old_versions = copy.deepcopy(raw.get('analysis_versions') or [version_payload(raw, 1)])
             if raw.get('edited'):
@@ -235,11 +293,14 @@ def _migrate_legacy_records_locked():
                 version_counter += 1
                 value = copy.deepcopy(value)
                 version_maps.setdefault(raw['id'], {})[value.get('version', 1)] = version_counter
+                value.setdefault('origin_id', raw['id'])
+                value.setdefault('origin_version', value.get('version', 1))
                 value['version'] = version_counter
                 versions.append(value)
             if float(raw.get('created', 0)) >= float(canonical.get('created', 0)):
                 for key in ('state', 'progress', 'message', 'min_length', 'sensitivity', 'candidates',
-                            'segments', 'waveform', 'speech_ranges', 'method', 'notice', 'updated'):
+                            'segments', 'waveform', 'speech_ranges', 'method', 'notice', 'updated',
+                            'revision', 'edited'):
                     if key in raw:
                         canonical[key] = raw[key]
         dedup = {}
@@ -247,20 +308,27 @@ def _migrate_legacy_records_locked():
             dedup[int(value.get('version', len(dedup) + 1))] = value
         canonical['analysis_versions'] = [dedup[n] for n in sorted(dedup)]
         canonical['analysis_version'] = max(dedup) if dedup else 1
+        if dedup:
+            latest = dedup[canonical['analysis_version']]
+            canonical.update({k: copy.deepcopy(v) for k, v in latest.items()
+                              if k not in {'version', 'created', 'origin_id', 'origin_version'}})
+            canonical['revision'] = int(latest.get('revision', 0))
+            canonical['edited'] = bool(latest.get('edited'))
         canonical['version_count'] = len(canonical['analysis_versions'])
         canonical['legacy_versions_migrated'] = True
         if canonical.get('state') in {'ready', 'done'}:
             canonical['message'] = f'已完成分析版本 v{canonical["analysis_version"]}，可在版本菜单中切换。'
         seen = set()
-        for value in exports:
-            mapping = version_maps.get(value.get('owner_id'), {})
+        for record_id, value in exports:
+            mapping = version_maps.get(record_id, {})
             if value.get('version') in mapping:
                 value['version'] = mapping[value['version']]
-        canonical['exports'] = [x for x in exports if not (x.get('id') in seen or seen.add(x.get('id')))]
+        canonical['exports'] = [x for _, x in exports if not (x.get('id') in seen or seen.add(x.get('id')))]
         JOBS[canonical['id']] = canonical
         persist(canonical)
         for duplicate in records[1:]:
             duplicate['merged_into'] = canonical['id']
+            duplicate['merged_versions'] = {str(k): v for k, v in version_maps.get(duplicate['id'], {}).items()}
             duplicate['message'] = f'已合并到版本记录 {canonical["id"]}'
             JOBS[duplicate['id']] = duplicate
             persist(duplicate)
@@ -268,7 +336,11 @@ def _migrate_legacy_records_locked():
 
 def job_view(job, version=None):
     if version is None:
-        return copy.deepcopy(job)
+        current = next((v for v in job.get('analysis_versions', [])
+                        if int(v.get('version', 0)) == int(job.get('analysis_version', 0))), None)
+        if current is None:
+            return copy.deepcopy(job)
+        version = current['version']
     try:
         wanted = int(version)
     except (TypeError, ValueError):
@@ -277,7 +349,8 @@ def job_view(job, version=None):
     if selected is None:
         raise ValueError('版本不存在')
     view = copy.deepcopy(job)
-    view.update({k: copy.deepcopy(v) for k, v in selected.items() if k not in {'version', 'created'}})
+    view.update({k: copy.deepcopy(v) for k, v in selected.items()
+                 if k not in {'version', 'created', 'origin_id', 'origin_version'}})
     view['analysis_version'] = wanted
     view['selected_version'] = wanted
     view['revision'] = int(selected.get('revision', 0))
@@ -311,7 +384,8 @@ def restore_completed_version(identifier, state, message):
         versions = job.get('analysis_versions') or []
         if versions:
             latest = max(versions, key=lambda v: int(v['version']))
-            job.update({k: copy.deepcopy(v) for k, v in latest.items() if k not in {'version', 'created'}})
+            job.update({k: copy.deepcopy(v) for k, v in latest.items()
+                        if k not in {'version', 'created', 'origin_id', 'origin_version'}})
             job['analysis_version'] = latest['version']
         job.update(state=state, message=message)
         persist(job)
@@ -441,7 +515,7 @@ def run_export(identifier, segments, mode, export_id, resume=False):
         files = export_segments(job['source'], segments, export_directory(job, export), mode,
             lambda p, m: update(identifier, progress=p, message=m), lambda: identifier in CANCEL,
             completed_files=export['files'] if resume else None, on_complete=completed,
-            expected_identity=job.get('source_identity'))
+            expected_identity=export.get('source_identity'))
         with LOCK:
             job = get_job(identifier)
             export = next(ex for ex in job['exports'] if ex['id'] == export_id)
@@ -486,7 +560,9 @@ def dispatch_get(handler, path, query):
                     continue
             return handler._json(sorted(records, key=lambda j: -j['created']))
         if path == '/api/concert/job':
-            return handler._json(job_view(snapshot(query.get('id', [''])[0]), query.get('version', [None])[0]))
+            with LOCK:
+                job, version = resolve_job_version(query.get('id', [''])[0], query.get('version', [None])[0])
+                return handler._json(job_view(copy.deepcopy(job), version))
         if path.startswith('/concert-files/'):
             parts = [unquote(p) for p in path.split('/')[2:]]
             if len(parts) < 2:
@@ -546,7 +622,8 @@ def dispatch_post(handler, path):
             with LOCK:
                 if ACTIVE:
                     return handler._json({'error': '已有切割任务在处理，请完成或取消后再开始'}, 409)
-                old = get_job(str(data.get('id') or ''))
+                record, version = resolve_job_version(str(data.get('id') or ''), data.get('version'))
+                old = job_view(record, version)
                 min_length = float(data.get('min_length', old.get('min_length', 120)))
                 sensitivity = data.get('sensitivity', old.get('sensitivity', 'balanced'))
                 import math
@@ -557,7 +634,8 @@ def dispatch_post(handler, path):
             return handler._json({'id': identifier}, 202)
         identifier = data.get('id', '')
         with LOCK:
-            job = get_job(identifier)
+            job, requested_version = resolve_job_version(identifier, data.get('version')) if path in {
+                '/api/concert/save', '/api/concert/export'} else (get_job(identifier), None)
             running = active_ids(job['id'])
             identifier = job['id']
             if path == '/api/concert/cancel':
@@ -598,15 +676,18 @@ def dispatch_post(handler, path):
                 manifest = folder / 'manifest.json'
                 if manifest.is_file():
                     saved = json.loads(manifest.read_text(encoding='utf-8'))
-                    if (saved.get('source_identity') != export['source_identity'] or
-                            saved.get('planned_segments') != [s for s in export['segments'] if s['selected']]):
-                        raise ValueError('导出清单已改变，请新建批次')
-                    published = {f['file']: f for f in export['files']}
+                    verify_export_plan(saved, job['source'], export['source_identity'], export['mode'],
+                                       [s for s in export['segments'] if s['selected']])
                     for value in saved.get('segments', []):
                         if Path(value['file']).name != value['file']:
                             raise ValueError('导出清单文件名无效')
-                        published[value['file']] = value
-                    export['files'] = list(published.values())
+                    # The worker verifies manifest files before publishing
+                    # them via on_complete; do not expose unverified entries.
+                pending = folder / 'publication.json'
+                if pending.is_file():
+                    verify_export_plan(json.loads(pending.read_text(encoding='utf-8')), job['source'],
+                                       export['source_identity'], export['mode'],
+                                       [s for s in export['segments'] if s['selected']])
                 export['state'] = 'exporting'
                 job.update(state='exporting', progress=0, message='正在继续未完成片段')
                 persist(job)
@@ -621,17 +702,17 @@ def dispatch_post(handler, path):
                     mode = data.get('mode', 'copy')
                     if mode not in {'copy', 'precise'} or not any(s['selected'] for s in segments):
                         raise ValueError('请选择有效导出模式及至少一个片段')
-                    viewed = job_view(job, data.get('version')) if data.get('version') is not None else job
+                    viewed = job_view(job, requested_version)
                     if not viewed.get('source_identity'):
                         raise ValueError('此旧版本未记录原视频指纹，请重新分析后再导出')
                     verify_source(job['source'], viewed['source_identity'])
-                version = save_version_segments(job, segments, data.get('version'), data.get('revision'))
+                version = save_version_segments(job, segments, requested_version, data.get('revision'))
                 if path.endswith('/save'):
                     return handler._json(job_view(job, version))
                 export_id = 'export-' + uuid.uuid4().hex[:12]
                 job.setdefault('exports', []).append({'id': export_id, 'mode': mode, 'files': [],
                     'owner_id': identifier, 'path': str(directory(identifier)/export_id),
-                    'source_identity': copy.deepcopy(job['source_identity']),
+                    'source_identity': copy.deepcopy(viewed['source_identity']),
                     'segments': copy.deepcopy(segments), 'version': version, 'state': 'exporting'})
                 job.update(state='exporting', progress=0, message='准备导出', current_export=str(directory(identifier)/export_id))
                 persist(job)

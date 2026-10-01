@@ -165,6 +165,7 @@ def parse_lyrics(raw: str) -> LyricDoc:
             stamps = list(_LRC_TIME.finditer(ln))
             if not stamps:
                 continue
+            first_stamp = _to_sec(stamps[0].group(1), stamps[0].group(2))
             body = _LRC_TIME.sub("", ln).strip()
             words = None
             if _LRC_WORD.search(body):
@@ -176,21 +177,26 @@ def parse_lyrics(raw: str) -> LyricDoc:
                 for k, wm in enumerate(matches):
                     st = _to_sec(wm.group(1), wm.group(2))
                     en = _to_sec(wm.group(3), wm.group(4)) if wm.group(3) else 0.0
+                    if not wm.group(3) and k + 1 < len(matches):
+                        following = matches[k + 1]
+                        # A trailing empty <time> still closes the preceding
+                        # lyric. Keep its clock even though it has no text.
+                        en = _to_sec(following.group(1), following.group(2))
                     nxt = matches[k + 1].start() if k + 1 < len(matches) else len(body)
                     seg = body[wm.end():nxt].strip()
                     if seg:
                         words.append((seg, st, en))
                 lead = body[:matches[0].start()].strip()
                 if lead:
-                    # 首个标记之前的游离文本：继承它的起点，避免丢字
-                    words.insert(0, (lead, words[0][1] if words else 0.0,
-                                     words[0][1] if words else 0.0))
+                    # Text before the first word marker starts at the line
+                    # clock and ends at that marker (also when it is empty).
+                    words.insert(0, (lead, first_stamp,
+                                     _to_sec(matches[0].group(1), matches[0].group(2))))
                 body = _LRC_WORD.sub("", body).strip()
                 words = _resolve_word_times(words)
             body = _strip_section(body)
             if not body:
                 continue
-            first_stamp = _to_sec(stamps[0].group(1), stamps[0].group(2))
             for sm in stamps:
                 stamp = _to_sec(sm.group(1), sm.group(2))
                 shift = stamp - first_stamp - offset
@@ -467,7 +473,7 @@ def _repair_collapsed(out: list[TokenSpan], hi: float) -> int:
 
 
 def _fill_and_monotonic(spans: list[TokenSpan | None], tokens: list[str],
-                        bound: tuple[float, float]) -> list[TokenSpan]:
+                        bound: tuple[float, float], *, repair_collapsed: bool = True) -> list[TokenSpan]:
     """补全缺失 token、修复坍缩段、压掉重叠，保证输出严格单调不重叠。"""
     lo, hi = bound
     n = len(tokens)
@@ -504,7 +510,8 @@ def _fill_and_monotonic(spans: list[TokenSpan | None], tokens: list[str],
         prev_end = s.end
 
     # 3) 修复塌缩段，然后重新单调化（补时只向后延展，正常应为空操作）
-    _repair_collapsed(out, hi)
+    if repair_collapsed:
+        _repair_collapsed(out, hi)
     prev_end = lo
     for s in out:
         if s.start < prev_end:
@@ -912,7 +919,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
 
         step(0.02, "探测媒体信息")
         info = probe_media(cfg.media, cancel=cancel)
-        if not info["has_audio"]:
+        if not info["has_audio"] and not cfg.audio_track:
             raise RuntimeError("输入文件没有音轨，无法对齐")
         src_for_audio = cfg.audio_track or cfg.media
         if not info["has_video"]:
@@ -960,7 +967,8 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         sep_src = str(full_wav)
         # A trusted word-timed LRC already supplies all alignment boundaries.
         # Separation only helps this path when the final audio removes vocals.
-        do_sep = cfg.separate and not cfg.audio_track and (not doc.word_timed or cfg.vocal_mode == 'remove')
+        use_word_times = doc.word_timed and cfg.timed_mode != 'ignore'
+        do_sep = cfg.separate and not cfg.audio_track and (not use_word_times or cfg.vocal_mode == 'remove')
         # 预对齐阶段已经分离过一次（in/vg/）→ 复用它，别再跑一遍 demucs
         pre_voc, pre_acc = job_dir / "in" / "vg" / "vocals.wav", \
             job_dir / "in" / "vg" / "accompaniment.wav"
@@ -1008,7 +1016,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         spans: list[TokenSpan | None] = [None] * len(flat)
         diag: dict = {}
         used_word_times = False
-        if doc.word_timed and cfg.timed_mode != "ignore":
+        if use_word_times:
             step(0.50, "检测到增强型 LRC 逐词时间戳，直接采信（跳过声学对齐）")
             used_word_times = True
             cur = 0
@@ -1030,7 +1038,8 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             step(0.78, f"对齐产出 {len(raw_units)} 个单元，回映射到 token 粒度")
             spans, diag = map_units_to_tokens(raw_units, flat, audio_dur)
 
-        spans = _fill_and_monotonic(spans, flat, (0.0, max(audio_dur, 0.1)))
+        spans = _fill_and_monotonic(spans, flat, (0.0, max(audio_dur, 0.1)),
+                                    repair_collapsed=not used_word_times)
         step(0.82, f"token 时间轴整理完成（映射方式 {diag.get('mode')}，"
                    f"字符匹配率 {diag.get('unit_ratio', '-')}）")
 
@@ -1351,7 +1360,8 @@ def _replace_line_text(line: KaraokeLine, text: str, lang: str) -> None:
 def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
             progress: ProgressFn | None = None,
             initial_lines: list[KaraokeLine] | None = None,
-            cancel: CancelFn | None = None) -> dict:
+            cancel: CancelFn | None = None,
+            initial_reference: dict | None = None) -> dict:
     """在既有对齐结果上应用人工微调并重新出片。
 
     只做「重建 ASS + 重跑 ffmpeg」，不加载任何模型 —— 秒级完成，
@@ -1365,6 +1375,13 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
     req = req or RestyleRequest()
     jd = Path(job_dir)
     job, lines = load_job(jd, req.base_version)
+    from alignment_review import edit_reference, lyric_reference
+    base_align = json.loads((jd / (f'align_v{req.base_version}.json'
+                                   if req.base_version else 'align.json')).read_text(encoding='utf-8'))
+    reference = lyric_reference(jd, {'acceptance_reference': initial_reference}
+                                if initial_reference is not None else base_align)
+    if reference is not None:
+        reference['base_version'] = req.base_version
     if initial_lines is not None:
         if not isinstance(initial_lines, list) or any(not isinstance(line, KaraokeLine) for line in initial_lines):
             raise ValueError('暂存歌词数据无效，请重新开始插入')
@@ -1411,6 +1428,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
                 lines[i] = KaraokeLine(raw=new.text,start=new.start,end=new.end,
                     tokens=[KaraokeToken(text=t.text,disp=t.text,start=t.start,end=t.end) for t in new.segments])
 
+    reference_rows = [line.raw for line in lines]
     for key, text in req.line_texts.items():
         try:
             index = int(key)
@@ -1421,6 +1439,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         if not isinstance(text, str):
             raise ValueError(f'第 {index+1} 句歌词格式无效')
         _replace_line_text(lines[index], text, job.get('lang', 'ja'))
+    reference = edit_reference(reference, reference_rows, req.line_texts)
 
     prog(0.05, "载入对齐结果")
     for i, ln in enumerate(lines):
@@ -1469,6 +1488,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
 
     insertion = req.line_insertion
     if insertion is not None:
+        reference_rows = [line.raw for line in lines]
         if not isinstance(insertion, dict):
             raise ValueError('新增歌词参数无效')
         after = insertion.get('after_row')
@@ -1491,6 +1511,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
             lines = realign_suffix(job, lines, after, prog, **({'cancel':cancel} if cancel else {}))
         else:
             raise ValueError('新增歌词定位方式无效')
+        reference = edit_reference(reference, reference_rows, insertion={**insertion, 'text': text})
 
     if has_anchors and not insertion:
         from anchor_realign import realign_suffix
@@ -1520,6 +1541,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         } for ln in lines]
         return {"ok": True, "preview": True, "lines": serialized_lines,
                 "health": health, "anchor_rows": anchor_rows,
+                "acceptance_reference": reference,
                 "_draft_lines": copy.deepcopy(lines)}
 
     ver = 1
@@ -1556,6 +1578,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         "line_texts": req.line_texts,
         "line_insertion": req.line_insertion,
         "line_insertions": req.draft_insertions,
+        "acceptance_reference": reference,
         "review_evidence": retry_evidence,
         "retry": retry_report,
         "operation": 'local_retry' if req.retry_suspects else ('insert_deferred' if req.draft_insertions else ('lyric_edit' if req.line_texts else (("insert_" + str(req.line_insertion.get('mode'))) if req.line_insertion else ("anchor_realign" if has_anchors else "retime")))),

@@ -143,5 +143,12 @@
     } catch (_) {}
     return 'webui/' + job;
   }
-  return {json, monitor, recover, cancelJobs, identity, active: state => ACTIVE.has(state)};
+  function generationState(capabilities, source, busy = false) {
+    if (!capabilities) return {allowed: false, reason: '正在检查本机功能…'};
+    if (!['whisper', 'sofa', 'asr'].includes(source) || capabilities[source]?.ok !== true) {
+      return {allowed: false, reason: capabilities[source]?.reason || '该歌词来源不可用，请检查安装环境。'};
+    }
+    return busy ? {allowed: false, reason: '当前有任务正在处理。'} : {allowed: true, reason: ''};
+  }
+  return {json, monitor, recover, cancelJobs, identity, generationState, active: state => ACTIVE.has(state)};
 });

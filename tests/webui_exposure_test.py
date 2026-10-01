@@ -33,6 +33,29 @@ class ExposureTest(unittest.TestCase):
             self.assertFalse(caps[key]['ok'])
             self.assertTrue(caps[key]['reason'])
 
+    def test_asr_and_sofa_require_whisper_prepass_dependencies(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root=Path(temp)
+            for name in ('asr','aligner'):
+                folder=root/name; folder.mkdir()
+                (folder/'config.json').write_text('{}')
+                (folder/'model.safetensors').write_bytes(b'capability-fixture')
+            checkpoint=root/'sofa.ckpt'; checkpoint.write_bytes(b'capability-fixture')
+            with patch.object(webui.model_paths,'QWEN_ASR_DIR',root/'asr'), \
+                    patch.object(webui.model_paths,'QWEN_ALIGNER_DIR',root/'aligner'), \
+                    patch.object(webui,'SOFA_CKPT',checkpoint):
+                for missing in ('whisper','stable_whisper','torch'):
+                    with self.subTest(missing=missing), \
+                            patch('importlib.util.find_spec',side_effect=lambda name:None if name==missing else object()):
+                        caps=webui.capabilities()
+                        for source in ('whisper','asr','sofa'):
+                            self.assertFalse(caps[source]['ok'])
+                            self.assertIn('Whisper',caps[source]['reason'])
+                with patch('importlib.util.find_spec',return_value=object()):
+                    caps=webui.capabilities()
+                    self.assertTrue(caps['asr']['ok'])
+                    self.assertTrue(caps['sofa']['ok'])
+
 
 class ErrorHygieneTest(unittest.TestCase):
     @classmethod
