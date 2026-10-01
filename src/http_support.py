@@ -2,6 +2,8 @@
 import ipaddress
 import mimetypes
 import re
+import socket
+import time
 from email.message import Message
 from pathlib import Path
 from urllib.parse import quote, urlparse
@@ -30,6 +32,51 @@ def request_allowed(handler):
     port = parsed.port or (443 if parsed.scheme == 'https' else 80)
     return port == handler.server.server_port and (
         parsed.hostname == host or (_loopback(parsed.hostname) and _loopback(host)))
+
+
+def reject_post(handler, payload, code, body_limit=1 << 20):
+    """Drain a bounded small POST before rejecting it, preserving HTTP/1.1.
+
+    Closing a Windows TCP socket with an unread JSON body can reset the
+    connection before its 403/415 response reaches the caller. Oversized,
+    chunked or incomplete bodies cannot be retained for another request.
+    """
+    try:
+        length = int(handler.headers.get('Content-Length') or 0)
+    except (TypeError, ValueError):
+        length = -1
+    drained = not handler.headers.get('Transfer-Encoding') and 0 <= length <= body_limit
+    if drained and length:
+        previous_timeout = handler.connection.gettimeout()
+        deadline = time.monotonic() + 1.
+        try:
+            remaining = length
+            while remaining:
+                budget = deadline - time.monotonic()
+                if budget <= 0:
+                    drained = False
+                    break
+                handler.connection.settimeout(budget)
+                block = handler.rfile.read1(min(65536, remaining))
+                if not block:
+                    drained = False
+                    break
+                remaining -= len(block)
+        except (OSError, TimeoutError):
+            drained = False
+        finally:
+            handler.connection.settimeout(previous_timeout)
+    if not drained:
+        handler.close_connection = True
+    result = handler._json(payload, code)
+    if not drained:
+        # Finish the response side before discarding the rejected connection.
+        try:
+            handler.wfile.flush()
+            handler.connection.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+    return result
 
 
 def serve_file(handler, path, download=False):

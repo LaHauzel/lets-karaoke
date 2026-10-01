@@ -1,5 +1,6 @@
 """Synthetic media and HTTP regression tests; no personal concert media required."""
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -508,6 +509,34 @@ class ConcertHttpTests(unittest.TestCase):
         self.assertEqual(self.post('analyze',{'source':'missing.mp4'}).status_code,400)
         self.assertEqual(self.post('analyze',{'source':str(self.source)},headers={'Origin':'https://foreign.test'}).status_code,403)
         self.assertEqual(self.post('save',{'id':'../../escape','segments':[]}).status_code,400)
+
+    def test_post_rejections_drain_body_and_preserve_keep_alive(self):
+        connection = http.client.HTTPConnection('127.0.0.1', self.server.server_port, timeout=5)
+        original_jobs = set(concert.JOBS)
+        body = json.dumps({'source': str(self.source), 'padding': 'x'*131072}).encode()
+        try:
+            for headers, status in [({'Content-Type': 'application/json', 'Origin': 'https://foreign.test'}, 403),
+                                    ({'Content-Type': 'text/plain'}, 415)]:
+                connection.request('POST', '/api/concert/analyze', body=body, headers=headers)
+                response = connection.getresponse()
+                self.assertEqual(response.status, status)
+                self.assertIn('error', json.loads(response.read()))
+                reusable = connection.sock
+                self.assertIsNotNone(reusable)
+                connection.request('GET', '/api/meta')
+                response = connection.getresponse()
+                self.assertEqual(response.status, 200)
+                self.assertIn('features', json.loads(response.read()))
+                self.assertIs(connection.sock, reusable)
+                connection.request('POST', '/api/concert/cancel', body=json.dumps({'id': '0000000000000000'}),
+                                   headers={'Content-Type': 'application/json'})
+                response = connection.getresponse()
+                self.assertEqual(response.status, 404)
+                response.read()
+                self.assertIs(connection.sock, reusable)
+            self.assertEqual(set(concert.JOBS), original_jobs)
+        finally:
+            connection.close()
 
     def test_feature_extraction_without_optional_vad(self):
         with patch.dict(sys.modules, {'webrtcvad': None}):

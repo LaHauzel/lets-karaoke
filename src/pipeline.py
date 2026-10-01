@@ -676,10 +676,20 @@ def separate_stems(src_audio: str | Path, out_dir: Path, model: str = "htdemucs_
     return str(v), str(a)
 
 
+def normalize_encoder(encoder: str) -> str:
+    value = {'libx264':'x264', 'h264_nvenc':'nvenc'}.get(encoder, encoder)
+    if value not in {'auto','x264','nvenc'}:
+        raise ValueError(f'未知视频编码器: {encoder}')
+    return value
+
+
 def _enc_args(encoder: str, quality: int) -> list[str]:
+    encoder = normalize_encoder(encoder)
     common = ["-pix_fmt", "yuv420p"]
     if encoder == "x264":
         return ["-c:v", "libx264", "-preset", "medium", "-crf", str(quality)] + common
+    if encoder != 'nvenc':
+        raise ValueError('自动编码器必须先解析为具体编码器')
     return ["-c:v", "h264_nvenc", "-preset", "p5", "-rc", "vbr",
             "-cq", str(quality), "-b:v", "0", "-g", "120"] + common
 
@@ -695,6 +705,7 @@ def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path
     必须先绝对化——否则相对路径的 ``out_path``（CLI 默认 ``--out out`` 就是
     相对的）会被 ffmpeg 解析成 ``ass_dir/out/...``，报 "No such file or directory"。
     """
+    encoder = normalize_encoder(encoder)
     media = str(Path(media).resolve())
     if audio_track:
         audio_track = str(Path(audio_track).resolve())
@@ -1591,7 +1602,7 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--demucs", default="htdemucs_ft")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--timed-mode", choices=["warp", "ignore"], default="warp")
-    ap.add_argument("--encoder", choices=["auto", "nvenc", "x264"], default="auto")
+    ap.add_argument("--encoder", choices=["auto", "nvenc", "x264", 'h264_nvenc', 'libx264'], default="auto")
     ap.add_argument("--quality", type=int, default=21)
     ap.add_argument("--font", default="Microsoft YaHei")
     ap.add_argument("--font-size", type=int, default=66)

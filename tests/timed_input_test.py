@@ -11,7 +11,17 @@ import numpy as np
 import sys
 
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'src'))
-from pipeline import PipelineConfig, run
+from pipeline import PipelineConfig, run, render_video
+
+
+class EncoderSelectionTests(unittest.TestCase):
+    def test_unknown_encoder_is_rejected_without_touching_completed_video(self):
+        with tempfile.TemporaryDirectory() as folder:
+            output=Path(folder)/'completed.mp4'; output.write_bytes(b'completed')
+            with patch('pipeline.run_process',side_effect=AssertionError('Must reject before FFmpeg')):
+                with self.assertRaisesRegex(ValueError,'未知视频编码器'):
+                    render_video('unused','unused.ass',Path(folder),output,None,{},encoder='unknown')
+            self.assertEqual(output.read_bytes(),b'completed')
 
 
 @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'),'FFmpeg is required')

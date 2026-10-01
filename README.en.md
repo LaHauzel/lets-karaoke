@@ -136,7 +136,7 @@ The tabs share the local service but keep their page state separate. Do not run 
 2. Choose the language, alignment backend, and output style, then start the job.
 3. Review line timings, confidence, and acoustic evidence in the result area.
 4. Adjust timestamps or set anchors, then re-align or re-render.
-5. Save a version and restore, re-render, or delete it from history.
+5. Save a version, restore or re-render it from history, or delete the entire history record.
 
 When lyrics are unavailable, use automatic transcription to create a draft. Correct the text and line breaks before using known-lyrics alignment for the final result.
 

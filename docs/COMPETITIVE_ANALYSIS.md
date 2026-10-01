@@ -119,6 +119,6 @@ Kapwing 有 [自定义卡拉 OK 视频教程](https://www.kapwing.com/resources/
 
 ## 9. 结论
 
-最强的开源直接对手是 karaoke-gen，成熟商业参照是 PowerKaraoke。Aegisub、Subtitle Edit 与 LosslessCut 更适合作为可互操作的工具和局部体验基线。项目应当围绕复杂现场歌唱的对齐恢复、中文 Windows 的可靠交付以及少量人工修正完成长演唱会，建立可测量的差异。
+本次调研中的主要开源直接对手是 karaoke-gen，成熟商业参照是 PowerKaraoke。Aegisub、Subtitle Edit 与 LosslessCut 更适合作为可互操作的工具和局部体验基线。项目应当围绕复杂现场歌唱的对齐恢复、中文 Windows 的可靠交付以及少量人工修正完成长演唱会，建立可测量的差异。
 
 后续宣传或 README 比较应使用“支持哪些明确流程”和“在什么基准上取得什么结果”，避免无依据的“唯一”“最高精度”“完全自动”或把翻译语言、宣传准确率和普通语音吞吐当作歌唱质量指标。

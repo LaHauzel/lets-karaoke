@@ -1182,6 +1182,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(body)))
         self.send_header("Cache-Control", "no-store")
+        if self.close_connection:
+            self.send_header('Connection', 'close')
         for k, v in (extra or {}).items():
             self.send_header(k, v)
         self.end_headers()
@@ -1300,14 +1302,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):  # noqa: N802
         u = urllib.parse.urlparse(self.path)
         try:
-            from http_support import request_allowed
+            from http_support import request_allowed, reject_post
             if not request_allowed(self):
-                self.close_connection = True
-                return self._json({'error':'仅允许本地工作台发起操作'},403)
+                return reject_post(self, {'error':'仅允许本地工作台发起操作'},403)
             required = 'multipart/form-data' if u.path == '/api/run' else 'application/json'
             if required != self.headers.get('Content-Type','').split(';',1)[0].strip().lower():
-                self.close_connection = True
-                return self._json({'error':'请求类型不正确'},415)
+                return reject_post(self, {'error':'请求类型不正确'},415)
             if u.path.startswith('/api/concert/'):
                 from concert_web import dispatch_post
                 return dispatch_post(self, u.path)
