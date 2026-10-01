@@ -1283,9 +1283,12 @@ class Handler(BaseHTTPRequestHandler):
                 ctype = 'text/javascript' if name.endswith('.js') else 'text/css' if name.endswith('.css') else 'text/html'
                 return self._send(200, ctype + '; charset=utf-8', (ASSETS / name).read_bytes())
             if u.path == "/api/meta":
+                from lyrics_search import metadata as lyrics_search_metadata
                 return self._json({
                     "features": {"multi_anchor": True, "strict_timeline_order": True,
-                                 'async_edit': True, 'persistent_queue': True},
+                                 'async_edit': True, 'persistent_queue': True, 'lyrics_search': True},
+                    "lyrics_search": {**lyrics_search_metadata(),
+                                      'privacy': '仅在主动搜索时发送歌名和艺人，不发送媒体或本地歌词'},
                     "fonts": [n for f, n in FONT_CANDIDATES if Path(f).exists()],
                     "defaults": DEFAULT_OPTIONS,
                     "demucs": ["htdemucs_ft", "htdemucs", "mdx_extra"],
@@ -1296,7 +1299,8 @@ class Handler(BaseHTTPRequestHandler):
                                       for p in ("balanced", "automatic", "legacy")},
                     "capabilities": capabilities(),
                 })
-            if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js'):
+            if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js',
+                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
@@ -1366,6 +1370,8 @@ class Handler(BaseHTTPRequestHandler):
             if u.path.startswith('/api/concert/'):
                 from concert_web import dispatch_post
                 return dispatch_post(self, u.path)
+            if u.path in {'/api/lyrics/search', '/api/lyrics/get'}:
+                return self._api_lyrics(u.path)
             if u.path == "/api/run":
                 return self._api_run()
             if u.path == "/api/rerender":
@@ -1421,6 +1427,59 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": f"{type(e).__name__}: {e}"}, 500)
 
     # ---- 实现 ----------------------------------------------------------
+    def _api_lyrics(self, path):
+        from http_support import reject_post
+        from lyrics_search import LyricsSearchError, get_lyrics, search
+        if self.headers.get('Transfer-Encoding'):
+            self.close_connection = True
+            return self._json({'error': '歌词查询不支持分块请求'}, 400)
+        try:
+            length = int(self.headers.get('Content-Length') or 0)
+        except ValueError:
+            return reject_post(self, {'error': '歌词查询请求长度无效'}, 400)
+        if not 0 < length <= 4096:
+            return reject_post(self, {'error': '歌词查询请求必须在 4 KiB 以内'}, 413, body_limit=4096)
+        previous_timeout = self.connection.gettimeout()
+        deadline = time.monotonic() + 5
+        try:
+            body = bytearray()
+            while len(body) < length:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError
+                self.connection.settimeout(remaining)
+                chunk = self.rfile.read1(length - len(body))
+                if not chunk:
+                    break
+                body.extend(chunk)
+            if time.monotonic() >= deadline:
+                raise TimeoutError
+            if len(body) != length:
+                self.close_connection = True
+                return self._json({'error': '歌词查询请求不完整，请重试'}, 400)
+            data = json.loads(body)
+        except TimeoutError:
+            self.close_connection = True
+            return self._json({'error': '歌词查询请求接收超时，请重试'}, 408)
+        except (ValueError, RecursionError):
+            return self._json({'error': '歌词查询 JSON 格式无效或嵌套过深'}, 400)
+        finally:
+            self.connection.settimeout(previous_timeout)
+        if not isinstance(data, dict):
+            return self._json({'error': '歌词查询参数需为对象'}, 400)
+        allowed = {'track_name', 'artist_name'} if path.endswith('/search') else {'id'}
+        if set(data) - allowed:
+            return self._json({'error': '歌词查询仅接受歌名、艺人名或词库记录编号'}, 400)
+        try:
+            result = (search(data.get('track_name'), data.get('artist_name', ''))
+                      if path.endswith('/search') else get_lyrics(data.get('id')))
+            return self._json(result)
+        except LyricsSearchError as exc:
+            payload = {'error': str(exc)}
+            if exc.retry_after is not None:
+                payload['retry_after'] = exc.retry_after
+            return self._json(payload, exc.status)
+
     def _api_run(self):
         if not UPLOAD_SLOTS.acquire(blocking=False):
             self.close_connection = True

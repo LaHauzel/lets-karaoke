@@ -1,0 +1,28 @@
+.lyrics-search{margin-top:12px;padding:12px;border:1px solid var(--lk-border,var(--line,#30363d));border-radius:9px;background:var(--lk-surface,var(--panel2,#1c2128));color:var(--lk-text,var(--fg,#e6edf3));font-size:12.5px;overflow-wrap:anywhere}
+.lyrics-search .ls-heading{margin:0;font-size:13px;font-weight:650;color:inherit}
+.lyrics-search .ls-note,.lyrics-search .ls-meta{margin:6px 0;color:var(--lk-muted,var(--muted,#8b949e));font-size:12px}
+.lyrics-search .ls-form{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:9px}
+.lyrics-search .ls-label{display:block;margin:0;font-size:12px;color:var(--lk-muted,var(--muted,#8b949e))}
+.lyrics-search .ls-input{display:block;width:100%;min-width:0;margin-top:4px;padding:7px 9px;border:1px solid var(--lk-border,var(--line,#30363d));border-radius:7px;background:var(--lk-bg,var(--bg,#0d1117));color:var(--lk-text,var(--fg,#e6edf3));font:inherit}
+.lyrics-search .ls-form>.ls-actions{grid-column:1/-1}
+.lyrics-search .ls-actions{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-top:8px}
+.lyrics-search .ls-button{border:1px solid var(--lk-border,var(--line,#30363d));border-radius:6px;padding:5px 9px;color:var(--lk-text,var(--fg,#e6edf3));background:var(--lk-bg,var(--bg,#0d1117));font:inherit;cursor:pointer}
+.lyrics-search .ls-button:hover:not(:disabled){border-color:var(--lk-accent,var(--accent,#58a6ff));background:var(--lk-surface,var(--panel,#161b22))}
+.lyrics-search .ls-button:disabled,.lyrics-search .ls-input:disabled{opacity:.45;cursor:not-allowed}
+.lyrics-search .ls-button:focus-visible,.lyrics-search .ls-input:focus-visible,.lyrics-search .ls-source:focus-visible{outline:2px solid var(--lk-accent,var(--accent,#58a6ff));outline-offset:2px}
+.lyrics-search .ls-import{background:var(--lk-accent-strong,var(--accent2,#1f6feb));border-color:transparent;color:var(--lk-accent-text,#fff);font-weight:600}
+.lyrics-search .ls-import:hover:not(:disabled){background:var(--lk-accent,var(--accent2,#1f6feb));border-color:transparent;color:var(--lk-accent-text,#fff)}
+.lyrics-search .ls-status{margin:9px 0;color:var(--lk-muted,var(--muted,#8b949e));white-space:pre-wrap}
+.lyrics-search .ls-error{color:var(--lk-danger,var(--err,#f85149))}
+.lyrics-search .ls-results{display:grid;gap:8px;max-height:310px;overflow:auto;scrollbar-color:var(--lk-border,var(--line,#30363d)) transparent}
+.lyrics-search .ls-result,.lyrics-search .ls-preview{padding:10px;border:1px solid var(--lk-border,var(--line,#30363d));border-radius:7px;background:var(--lk-bg,var(--bg,#0d1117));min-width:0}
+.lyrics-search .ls-title{display:block;font-size:13px;line-height:1.5;color:var(--lk-text,var(--fg,#e6edf3));margin:0;white-space:pre-wrap}
+.lyrics-search .ls-tags{display:flex;gap:5px;flex-wrap:wrap;margin-top:6px}
+.lyrics-search .ls-tag{font-size:11px;padding:1px 6px;border:1px solid var(--lk-border,var(--line,#30363d));border-radius:10px;color:var(--lk-muted,var(--muted,#8b949e))}
+.lyrics-search .ls-source{color:var(--lk-accent,var(--accent,#58a6ff));font-size:11px;margin-right:auto}
+.lyrics-search .ls-preview{margin-top:10px}
+.lyrics-search .ls-confirm{margin-top:10px;padding:11px;border:1px solid var(--lk-warm,#edbe7d);border-radius:8px;background:var(--lk-panel-raised,var(--panel2,#1c2128))}
+.lyrics-search .ls-confirm-text{margin:0;color:var(--lk-text,var(--fg,#e6edf3));white-space:pre-wrap}
+.lyrics-search .ls-lyrics{white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;margin:9px 0;padding:9px;border-radius:6px;border:1px solid var(--lk-border,var(--line,#30363d));background:var(--lk-surface,var(--panel,#161b22));font:12px/1.7 ui-monospace,"Cascadia Mono",Consolas,monospace;color:var(--lk-text,var(--fg,#e6edf3))}
+.lyrics-search [hidden]{display:none!important}
+@media(max-width:460px){.lyrics-search .ls-form{grid-template-columns:1fr}.lyrics-search .ls-button{padding:6px 8px}}

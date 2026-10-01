@@ -1,0 +1,47 @@
+:root {
+  color-scheme: dark;
+  --lk-bg: #0b1116;
+  --lk-panel: #121c23;
+  --lk-panel-raised: #19262f;
+  --lk-surface: var(--lk-panel);
+  --lk-control: #0c151c;
+  --lk-border: #2a3b45;
+  --lk-text: #ecf3f3;
+  --lk-muted: #a1b3ba;
+  --lk-accent: #63dbc5;
+  --lk-accent-strong: #90edd8;
+  --lk-accent-text: #092820;
+  --lk-warm: #edbe7d;
+  --lk-danger: #ff9e97;
+  --lk-radius: 18px;
+  --lk-shadow: 0 16px 42px rgb(0 0 0 / 14%);
+  --lk-font: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  --lk-mono: "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; font-family: var(--lk-font); color: var(--lk-text); }
+button, input, select, textarea { font: inherit; }
+button, input, select, textarea, a { -webkit-tap-highlight-color: transparent; }
+::selection { color: var(--lk-text); background: #28695f; }
+:focus-visible { outline: 2px solid var(--lk-accent); outline-offset: 4px; }
+[hidden] { display: none !important; }
+
+.lk-card { background: var(--lk-panel); border: 1px solid var(--lk-border); border-radius: var(--lk-radius); box-shadow: var(--lk-shadow); }
+.lk-eyebrow { color: var(--lk-accent); font-size: 11px; font-weight: 650; letter-spacing: .12em; }
+.lk-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 11px; border: 1px solid var(--lk-border); border-radius: 999px; color: var(--lk-muted); font-size: 12px; line-height: 1.4; }
+.lk-button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 42px; padding: 9px 15px; border: 1px solid var(--lk-border); border-radius: 10px; color: var(--lk-text); background: var(--lk-panel-raised); font-weight: 600; cursor: pointer; }
+.lk-button:hover:not(:disabled) { border-color: var(--lk-accent); }
+.lk-button--primary { color: #092820; background: var(--lk-accent); border-color: var(--lk-accent); }
+.lk-button--primary:hover:not(:disabled) { background: var(--lk-accent-strong); }
+.lk-button:disabled { opacity: .45; cursor: not-allowed; }
+.lk-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lk-accent); flex: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

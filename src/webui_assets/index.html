@@ -9,6 +9,9 @@
 <link rel="stylesheet" href="/review.css">
 <script src="/lyric_waveform.js"></script>
 <script src="/task_client.js"></script>
+<script src="/lyrics_search.js"></script>
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/lyrics_search.css">
 <style>
 :root{
   --bg:#0d1117; --panel:#161b22; --panel2:#1c2128; --line:#30363d;
@@ -182,21 +185,25 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 .invalid{border-color:var(--err)!important;box-shadow:0 0 0 3px #f8514933!important}
 .field-err{color:var(--err);font-size:12px;margin:6px 0 0;white-space:pre-line}
 </style>
+<link rel="stylesheet" href="/karaoke.css">
 </head>
 <body>
 
-<header>
-  <h1>lets-karaoke · 卡拉OK字幕工坊</h1>
-  <span class="pill on">全本地模型</span>
-  <span class="pill">无在线 API</span>
+<header class="studio-header">
+  <div><span class="lk-eyebrow">KARAOKE STUDIO</span><h1>让每一句，都跟上音乐。</h1><p>从一首歌到一支字幕成片，在这里完成。</p></div>
   <span class="spacer"></span>
-  <span class="pill" id="devPill">设备探测中…</span>
+  <div class="studio-status"><span class="pill on">本地处理</span><span class="pill" id="devPill" role="status">连接工作台…</span></div>
 </header>
 
+<nav class="workflow-strip" aria-label="制作流程">
+  <a href="#inputCard"><span>01</span><div><b>准备素材</b><small>媒体与歌词</small></div></a>
+  <a href="#styleCard"><span>02</span><div><b>设计字幕</b><small>样式与位置</small></div></a>
+  <a href="#generationCard"><span>03</span><div><b>生成与复核</b><small>时间轴与成片</small></div></a>
+</nav>
 <div class="wrap">
   <!-- ================= 左栏 ================= -->
   <div>
-    <div class="card">
+    <div class="card history-card">
       <details id="historyPanel"><summary>本地历史记录 <span id="historyCount"></span></summary>
         <p class="hint">扫描项目 out 目录中的已保存任务和对齐结果。选择记录可恢复所有版本；缺少原任务配置的实验结果仅供查看。</p>
         <input id="historySearch" type="text" placeholder="按歌曲或目录搜索" aria-label="搜索历史记录">
@@ -210,13 +217,14 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <div id="historyList" style="max-height:340px;overflow:auto;margin-top:8px"></div>
       </details>
     </div>
-    <div class="card">
-      <h2><span class="n">1</span>输入</h2>
+    <div class="card" id="inputCard">
+      <h2><span class="n">1</span>准备素材 <span class="card-caption">一首或多首，按顺序制作</span></h2>
 
       <label class="fl">视频 / 音频（必填）</label>
-      <div class="drop" id="dropMedia">
-        <b>拖入文件，或点击选择</b>
-        <span>支持多选文件，也可以选择整个文件夹</span>
+      <div class="drop" id="dropMedia" tabindex="0" role="button" aria-label="选择音频或视频文件">
+        <span class="upload-glyph" aria-hidden="true">↥</span>
+        <b>把音乐或视频放在这里</b>
+        <span>拖入文件，或点击选择 · 支持批量</span>
         <div style="display:flex;gap:6px;justify-content:center;flex-wrap:wrap;margin-top:8px">
           <button type="button" class="mini" id="pickMediaFiles">选择多个文件</button>
           <button type="button" class="mini" id="pickMediaFolder">选择文件夹</button>
@@ -235,14 +243,15 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <p class="hint" style="margin-bottom:0">点击文件后，在歌词区、语言选项和字幕样式区编辑；修改只应用于当前文件。每个文件会生成独立历史记录。</p>
       </div>
 
-      <label class="fl">歌词来源（三选一 · 不确定就选第一个）</label>
+      <label class="fl">歌词处理方式</label>
       <div class="seg" id="segSrc" style="margin-bottom:7px">
-        <button data-v="whisper" class="on">① 我有歌词 · whisper 对齐</button>
-        <button data-v="sofa">② 日语歌词 · SOFA 实验</button>
-        <button data-v="asr">③ 没歌词 · 自动转写</button>
+        <button data-v="whisper" class="on">已有歌词</button>
+        <button data-v="sofa">日语歌声细化</button>
+        <button data-v="asr">自动转写</button>
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
       <div class="hint" id="sourceAvailability" role="status">正在检查本机功能…</div>
+      <details class="settings-details"><summary>对齐设置 <span>默认参数适用于大多数任务</span></summary>
       <div id="whisperOpts"
            style="font-size:12.5px;color:var(--tx2);margin:-2px 0 9px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -319,9 +328,10 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
           <dt>enforce_timing · 最短时长与不重叠</dt><dd>最后的结构安全检查，保证时间轴可渲染；通过不代表字幕一定唱准。</dd>
         </dl>
       </div>
+      </details>
       <div id="whisperNeedLyrics" class="hidden"
            style="font-size:12px;color:var(--warn);margin:-4px 0 9px">
-        ⚠ 请先粘贴或选择歌词文本 —— 对齐是把「你给的词」对到音频上，不是转写。
+        请先粘贴、选择或联网查找歌词；没有歌词时可选择“自动转写”。
       </div>
       <div id="asrHint" class="hidden"
            style="font-size:12px;color:var(--warn);margin:-4px 0 9px">
@@ -334,7 +344,9 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         无法映射或细化失败时沿用行窗口并插值；结果需要试听确认。
       </div>
       <div class="field-err hidden" id="lyricsErr" role="alert"></div>
-      <textarea id="lyrics" aria-label="歌词文本" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;—— 也可粘贴 LRC：[00:12.34]东风送来清凉&#10;—— 没有歌词文件？把上面切到「③ 没歌词 · 自动转写」&#10;—— 没时间戳也行，会自动对齐"></textarea>
+      <details class="lyrics-search-details" id="lyricsSearchPanel"><summary>联网查找歌词 <span>按歌名与艺人搜索</span></summary><div id="lyricsSearch"></div></details>
+      <label class="fl" for="lyrics">歌词文本 <span class="field-note">每行一句，也支持 LRC 时间轴</span></label>
+      <textarea id="lyrics" aria-label="歌词文本" placeholder="东风送来清凉&#10;小船划过池塘&#10;月色照在桥上&#10;&#10;也可粘贴 LRC：[00:12.34]东风送来清凉&#10;没有歌词？可联网查找，或选择“自动转写”。&#10;没有时间戳也可以，生成时会对齐。"></textarea>
       <div class="row" style="margin-top:9px">
         <label class="mini" style="text-align:center;padding:7px 0;cursor:pointer;display:block">
           选择歌词文件 <input type="file" id="lyricsFile" accept=".txt,.lrc,.srt,.ass" class="hidden">
@@ -344,7 +356,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       <div class="fn" id="fnLyrics" style="font-size:12px;color:var(--ok);margin-top:6px;word-break:break-all"></div>
 
       <label class="fl">独立音轨（可选 · 伴奏或干声，将替换原音）</label>
-      <div class="drop" id="dropTrack">
+      <div class="drop track-drop" id="dropTrack" tabindex="0" role="button" aria-label="选择独立音轨">
         <b>拖入或点击选择</b><span>留空则使用视频自带音轨</span>
         <div class="fn" id="fnTrack"></div>
       </div>
@@ -408,7 +420,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </details>
     </div>
 
-    <div class="card">
+    <div class="card" id="styleCard">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
         <h2><span class="n">2</span>字幕样式</h2>
         <button class="mini" type="button" id="btnResetStyle">重置当前样式</button>
@@ -456,19 +468,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <option value="2" selected>2 行 · 当前句 + 下一句</option>
         <option value="3">3 行 · 当前句 + 后两句</option>
       </select>
-      <div style="margin-top:16px">
-      <label class="fl">画面预览 · 选择视频后默认第一帧，可拖动下方时间轴</label>
-        <div id="stylePreview" class="style-preview" aria-label="字幕样式叠加预览">
-          <video id="stylePreviewVideo" muted playsinline preload="metadata" aria-label="所选视频画面预览"></video>
-          <div id="stylePreviewPlaceholder" class="style-preview-placeholder">选择视频后在这里预览字幕样式<br><span class="hint">预览读取本机文件，不会提前上传</span></div>
-          <div id="stylePreviewCaptions" aria-live="polite"></div>
-        </div>
-        <div class="frame-tools">
-          <input id="previewFrame" type="range" min="0" max="0.1" step="0.04" value="0" disabled aria-label="预览视频帧时间">
-          <output id="previewFrameLabel">首帧</output>
-        </div>
-        <p class="hint">预览使用当前歌词的前几行；黄色展示约一半高亮进度。位置、字体和字号按画面比例预览。历史任务若要换帧预览，请重新选择原视频；MKV 等格式能否读取取决于浏览器。</p>
-      </div>
+      <p class="hint">右侧舞台预览会即时显示当前歌词、字号、颜色与位置。</p>
       <div class="row" style="margin-top:8px">
         <div>
           <label class="fl">预亮提前 <b id="leadVal" style="color:var(--fg)">320</b> ms</label>
@@ -490,19 +490,30 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
   </div>
 
   <!-- ================= 右栏 ================= -->
-  <div>
-    <div class="card">
-      <h2><span class="n">3</span>生成</h2>
+  <div class="studio-main">
+    <div class="card stage-card">
+      <div class="stage-heading"><div><span class="lk-eyebrow">YOUR STAGE</span><h2>舞台预览</h2></div><span class="pill">样式预览 · 未生成</span></div>
+      <div id="stylePreview" class="style-preview" aria-label="字幕样式叠加预览">
+        <video id="stylePreviewVideo" muted playsinline preload="metadata" aria-label="所选视频画面预览"></video>
+        <div id="stylePreviewPlaceholder" class="style-preview-placeholder"><div class="stage-orbit" aria-hidden="true">♪</div><b id="stagePlaceholderTitle">下一首，由你制作。</b><span>选择媒体，预览歌词在舞台上的样子</span><small>画面预览在本机读取，不会提前上传</small></div>
+        <div id="stylePreviewCaptions" aria-live="polite"></div>
+      </div>
+      <div class="frame-tools"><input id="previewFrame" type="range" min="0" max="0.1" step="0.04" value="0" disabled aria-label="预览视频帧时间"><output id="previewFrameLabel">首帧</output></div>
+      <p class="hint">选择视频帧查看字幕效果。高亮为样式示意，实际演唱时间以生成结果为准。</p>
+    </div>
+    <div class="card generation-card" id="generationCard">
+      <h2><span class="n">3</span>生成与复核 <span class="card-caption">处理将在后台队列继续</span></h2>
+      <div id="inputReadiness" class="input-readiness" aria-live="polite"><span>○ 尚未选择媒体</span><span>○ 准备歌词</span></div>
       <button class="primary" id="btnRun" disabled>开始生成卡拉OK</button>
       <div class="barwrap" style="margin-top:12px">
         <div class="lbl"><span id="stageTxt">待开始</span><span id="pctTxt">0%</span></div>
         <div class="bar"><i id="barFill"></i></div>
       </div>
-      <pre class="log" id="log">就绪。上传视频与歌词后点「开始生成」。</pre>
+      <details id="taskLog" class="task-log"><summary>处理日志 <span>查看详细进度</span></summary><pre class="log" id="log">就绪。选择媒体并准备歌词后开始生成。</pre></details>
       <div style="margin-top:10px;display:flex;gap:8px">
         <button class="ghost" id="btnCancel" style="flex:1" disabled>取消当前任务 / 停止批量</button>
       </div>
-      <div class="err hidden" id="errBox"></div>
+      <div class="err hidden" id="errBox" role="alert"></div>
     </div>
 
     <div class="review-layout">
@@ -583,6 +594,9 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 const $ = (s) => document.querySelector(s);
 let JOB = null, ALIGN = null, ES = null, MEDIA_QUEUE = [], MEDIA_ITEMS = [], MEDIA_ACTIVE_INDEX = -1;
 let MEDIA_SWITCHING = false, BATCH_CANCEL_REQUESTED = false;
+let MEDIA_SELECTION_VERSION = 0;
+let LYRICS_LOOKUP_CONTEXT = null;
+let LYRICS_FILE_READ_VERSION = 0, LYRICS_PENDING_FILE_READ = null;
 let TUNE_VERSION = 0, TUNE_LOOP = null, WAVEFORM = null, ANCHOR_ROWS = new Set(), EDIT_DRAFT_ID = null;
 let HISTORY = [], EDITABLE = true, EDITING = false, ANCHOR_API_SUPPORTED = false;
 let GENERATION_BUSY = false, EDIT_OPERATION = null, ASYNC_EDIT_SUPPORTED = false, DRAFT_RESTORE_BLOCKED = false;
@@ -704,6 +718,8 @@ function refreshRunAvailability(){
   const source=TaskClient.generationState(CAPABILITIES,SRC);
   $('#sourceAvailability').textContent=source.reason;
   $('#sourceAvailability').classList.toggle('hidden',source.allowed);
+  globalThis.LYRICS_SEARCH?.refreshAvailability?.();
+  globalThis.updateInputSummary?.();
 }
 
 async function recoverTasks(serverJobs){
@@ -762,12 +778,9 @@ seg('#segSrc',   v => { SRC = v; refreshSrcUI(); });
 
 // 歌词来源三选一（分段选择器天然互斥，不会出现「勾了一个另一个的选项还亮着」）
 const SRC_HINT = {
-  whisper: '① 有歌词 + whisper 对齐（推荐）：把「你给的词」对到人声上；large-v3 本地跑，' +
-           '提供词概率诊断、人声能量辅助修正和疑难句提示；模型分数不能代替试听验收。',
-  sofa:    '② 日语歌词 + SOFA（实验性）：先用 Whisper 定位每行，再按日语音素细化；' +
-           '无法映射或细化失败时沿用行窗口并插值，结果仍需试听确认。此路线仅支持日语。',
-  asr:     '③ 没歌词 · 自动转写：本地 Qwen3-ASR-1.7B 转写歌词草稿（务必手动选对语言），' +
-           '随后自动用 Whisper 对齐并出片；识别出的歌词仍可能有错字。',
+  whisper: '已有歌词：把你提供的歌词对到演唱时间上。生成后可试听并微调。',
+  sofa: '日语歌声细化：适合日语歌曲，尝试更细地定位字音。此功能仍在实验中，请试听确认。',
+  asr: '自动转写：没有歌词时，先识别歌词草稿再生成字幕。请选对语言，并核对可能识别错的字。',
 };
 function refreshSrcUI(){
   if(SRC==='sofa'){
@@ -777,7 +790,7 @@ function refreshSrcUI(){
   }
   $('#segLang').querySelectorAll('button').forEach(button=>button.disabled=SRC==='sofa'&&button.dataset.v!=='ja');
   $('#srcHint').textContent = SRC_HINT[SRC] || '';
-  const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0];
+  const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile;
   $('#whisperOpts').classList.toggle('hidden', SRC === 'sofa');
   $('#sofaHint').classList.toggle('hidden', SRC !== 'sofa');
   $('#asrHint').classList.toggle('hidden', !(SRC === 'asr' && LANG === 'auto'));
@@ -857,6 +870,16 @@ function captureActiveMediaItem(){
   item.lang = LANG;
   item.style = JSON.parse(JSON.stringify(styleOptions()));
 }
+function invalidateLyricsFileRead(){
+  LYRICS_FILE_READ_VERSION++;
+  if(LYRICS_PENDING_FILE_READ&&$('#lyricsFile').files[0]===LYRICS_PENDING_FILE_READ.file)$('#lyricsFile').value='';
+  LYRICS_PENDING_FILE_READ=null;
+}
+function detachLyricsFile(){
+  invalidateLyricsFileRead();$('#lyricsFile').value='';$('#fnLyrics').textContent='';
+  const item=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+  if(item){item.lyricsFile=null;item.lyricsFileName='';}
+}
 function renderMediaQueue(){
   const box=$('#mediaQueueBox'),list=$('#mediaQueueList');
   if(!box||!list)return;
@@ -876,6 +899,7 @@ function renderMediaQueue(){
 }
 function activateMediaItem(index){
   if(index<0||index>=MEDIA_ITEMS.length)return;
+  invalidateLyricsFileRead();
   captureActiveMediaItem();
   const item=MEDIA_ITEMS[index];
   MEDIA_SWITCHING=true;MEDIA_ACTIVE_INDEX=index;
@@ -895,6 +919,7 @@ function dropWire(dropId, inputId, fnId, onSet){
   const d = $(dropId), inp = $(inputId);
   const accept = () => { inp.click(); };
   d.addEventListener('click', accept);
+  d.addEventListener('keydown', e => {if(e.target===d&&['Enter',' '].includes(e.key)){e.preventDefault();accept();}});
   inp.addEventListener('change', () => { if(inp.files[0]) set(inp.files[0], [...inp.files]); });
   ['dragenter','dragover'].forEach(ev =>
     d.addEventListener(ev, e => { e.preventDefault(); d.classList.add('hot'); }));
@@ -919,6 +944,8 @@ function mediaFiles(files){
   ));
 }
 function setMediaSelection(first, files=[first]){
+  invalidateLyricsFileRead();
+  MEDIA_SELECTION_VERSION++;
   captureActiveMediaItem();
   const selected = mediaFiles(files);
   const seedLyrics = $('#lyrics').value;
@@ -985,26 +1012,29 @@ window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);
 dropWire('#dropTrack', '#track', '#fnTrack');
 
 $('#lyricsFile').addEventListener('change', async e => {
-  const f = e.target.files[0]; if(!f) return;
-  $('#lyrics').value = await f.text();
-  $('#fnLyrics').textContent = '已载入：' + f.name;
-  refreshSrcUI();
-  if(MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
-    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFile = f;
-    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFileName = f.name;
-    captureActiveMediaItem(); renderMediaQueue();
-  }
+  const file=e.target.files[0],version=++LYRICS_FILE_READ_VERSION;
+  LYRICS_PENDING_FILE_READ=null;if(!file)return;
+  const read={file,version,context:lyricsContextKey(),textBefore:$('#lyrics').value};
+  LYRICS_PENDING_FILE_READ=read;$('#fnLyrics').textContent='正在读取：'+file.name;
+  const current=()=>read.version===LYRICS_FILE_READ_VERSION&&read.context===lyricsContextKey()
+    &&$('#lyricsFile').files[0]===file&&$('#lyrics').value===read.textBefore;
+  try{
+    const text=await file.text();if(!current())return;
+    $('#lyrics').value=text;$('#fnLyrics').textContent='已载入：'+file.name;
+    const item=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+    if(item){item.lyricsFile=file;item.lyricsFileName=file.name;}
+    captureActiveMediaItem();refreshSrcUI();renderStylePreview();renderMediaQueue();
+  }catch(error){
+    if(!current())return;
+    $('#lyricsFile').value='';$('#fnLyrics').textContent='读取失败：'+file.name;
+    showErr('歌词文件读取失败：'+error.message);refreshSrcUI();
+  }finally{if(LYRICS_PENDING_FILE_READ===read)LYRICS_PENDING_FILE_READ=null;}
 });
 $('#btnClearLyrics').addEventListener('click', () => {
-  $('#lyrics').value = ''; $('#lyricsFile').value = ''; $('#fnLyrics').textContent = '';
-  if(MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
-    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFile = null;
-    MEDIA_ITEMS[MEDIA_ACTIVE_INDEX].lyricsFileName = '';
-    captureActiveMediaItem(); renderMediaQueue();
-  }
-  renderStylePreview();
+  detachLyricsFile();$('#lyrics').value='';
+  captureActiveMediaItem();refreshSrcUI();renderStylePreview();renderMediaQueue();
 });
-$('#lyrics').addEventListener('input', () => { captureActiveMediaItem(); refreshSrcUI(); renderStylePreview(); renderMediaQueue(); });
+$('#lyrics').addEventListener('input', () => { detachLyricsFile();captureActiveMediaItem();refreshSrcUI();renderStylePreview();renderMediaQueue(); });
 
 // ---------------------------------------------------------------- 滑块回显
 const bindVal = (id, out, fmt = v => v) =>
@@ -1030,7 +1060,7 @@ $('#stylePreviewVideo').addEventListener('loadedmetadata', () => {
 $('#stylePreviewVideo').addEventListener('seeked', () => updatePreviewFrameLabel($('#stylePreviewVideo').currentTime));
 $('#stylePreviewVideo').addEventListener('error', () => {
   $('#stylePreviewPlaceholder').classList.remove('hidden');
-  $('#stylePreviewPlaceholder').firstChild.textContent='浏览器无法预览此视频编码';
+  $('#stagePlaceholderTitle').textContent='浏览器无法预览此视频编码';
   $('#previewFrame').disabled=true;
 });
 $('#fontSize').addEventListener('input', updatePreviewPositionLimit);
@@ -1062,7 +1092,7 @@ function setStylePreviewFile(file){
   preview.style.width='100%';preview.style.height='auto';
   const isVideo=file.type.startsWith('video/')||/\.(mp4|m4v|mov|mkv|webm|avi)$/i.test(file.name);
   video.pause();video.removeAttribute('src');video.load();
-  if(!isVideo){video.classList.add('hidden');placeholder.classList.remove('hidden');placeholder.firstChild.textContent='当前选择的是音频文件';slider.disabled=true;slider.value='0';updatePreviewFrameLabel(null);return;}
+  if(!isVideo){video.classList.add('hidden');placeholder.classList.remove('hidden');$('#stagePlaceholderTitle').textContent='音频也能拥有自己的舞台。';slider.disabled=true;slider.value='0';updatePreviewFrameLabel(null);return;}
   STYLE_PREVIEW_URL=URL.createObjectURL(file);video.src=STYLE_PREVIEW_URL;video.currentTime=0;
   video.classList.remove('hidden');placeholder.classList.add('hidden');slider.disabled=false;slider.value='0';updatePreviewFrameLabel(0);
 }
@@ -1073,9 +1103,12 @@ function updatePreviewFrameLabel(seconds){
 }
 function fitPreviewToVideo(){
   const video=$('#stylePreviewVideo'),preview=$('#stylePreview'),parent=preview?.parentElement;
-  if(!video?.videoWidth||!parent)return;
-  const ratio=video.videoWidth/video.videoHeight,width=parent.clientWidth,height=Math.min(420,width/ratio);
-  preview.style.width=Math.round(height*ratio)+'px';preview.style.height=Math.round(height)+'px';
+  if(!video?.videoWidth||!video.videoHeight||!parent)return;
+  const padding=getComputedStyle(parent);
+  const width=Math.max(0,parent.clientWidth-(parseFloat(padding.paddingLeft)||0)-(parseFloat(padding.paddingRight)||0));
+  if(!width)return;
+  const ratio=video.videoWidth/video.videoHeight,height=Math.min(420,width/ratio);
+  preview.style.width=(height*ratio)+'px';preview.style.height=height+'px';
 }
 function updatePreviewPositionLimit(){
   const slider=$('#positionY');if(!slider)return;
@@ -1177,7 +1210,7 @@ $('#btnRun').addEventListener('click', async () => {
     const missing = items.filter(item => !(item.lyrics||'').trim() && !item.lyricsFile);
     if(missing.length){
       return fieldError($('#lyrics'), $('#lyricsErr'),
-        `请为以下文件填写歌词或选择歌词文件，或把「歌词来源」切到「③ 没歌词 · 自动转写」：\n${missing.map(item => item.file.name).join('\n')}`);
+        `请为以下文件填写或选择歌词，或选择“自动转写”：\n${missing.map(item => item.file.name).join('\n')}`);
     }
   }
   let config;
@@ -1202,6 +1235,7 @@ $('#btnRun').addEventListener('click', async () => {
   $('#btnRun').disabled = true;
   $('#btnCancel').disabled = false;
   GENERATION_BUSY = true;
+  refreshRunAvailability();
   BATCH_CANCEL_REQUESTED = false;
   let completed = 0, failed = 0, needsFix = 0, needsReview = 0, cancelled = false;
   const submitted=[];
@@ -1984,6 +2018,44 @@ $('#tuneVersion').onchange=async()=>{
 for(const eventName of ['input','change'])document.addEventListener(eventName,event=>{
   if(['font','fontSize','sung','unsung','lineCount','positionX','positionY','leadMs','tailMs','groupUnit'].includes(event.target.id))persistDraft();
 });
+
+function lyricsContextKey(){return `media-${MEDIA_SELECTION_VERSION}-${MEDIA_ACTIVE_INDEX}`;}
+function updateInputSummary(){
+  const box=$('#inputReadiness');if(!box)return;
+  const count=MEDIA_ITEMS.length,active=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+  const hasLyrics=Boolean($('#lyrics').value.trim()||$('#lyricsFile').files[0]||active?.lyricsFile);
+  const states=[{ready:count>0,text:count?`✓ 已选择 ${count} 个媒体`:'○ 尚未选择媒体'},
+    {ready:SRC==='asr'||hasLyrics,text:SRC==='asr'?'✓ 将自动转写歌词':hasLyrics?'✓ 当前歌词已准备':'○ 粘贴歌词或联网查找'}];
+  box.replaceChildren();
+  for(const state of states){const chip=document.createElement('span');chip.textContent=state.text;chip.classList.toggle('ready',state.ready);box.append(chip);}
+  const key=lyricsContextKey();
+  if(globalThis.LYRICS_SEARCH&&key!==LYRICS_LOOKUP_CONTEXT){
+    LYRICS_LOOKUP_CONTEXT=key;globalThis.LYRICS_SEARCH.refreshContext();
+    const name=(active?.file?.name||'').replace(/\.[^.]+$/,'').replace(/^\d{1,3}[_ .-]+/,'');
+    const parts=name.match(/^(.+?)\s+[-–—]\s+(.+)$/);
+    globalThis.LYRICS_SEARCH.setQuery({track_name:(parts?parts[2]:name).slice(0,200),artist_name:(parts?parts[1]:'').slice(0,200)});
+  }
+}
+if(globalThis.LyricsSearch){
+  globalThis.LYRICS_SEARCH=LyricsSearch.mount({root:$('#lyricsSearch'),contextKey:lyricsContextKey,
+    canImport:()=>({allowed:!GENERATION_BUSY&&!EDITING&&!MEDIA_SWITCHING,
+      reason:'当前任务正在处理，请完成后再导入歌词。',
+      hasLyrics:Boolean($('#lyrics').value.trim()||$('#lyricsFile').files[0]||MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile)}),
+    onImport:value=>{
+      if(value.context_key!==lyricsContextKey()||GENERATION_BUSY||EDITING||MEDIA_SWITCHING)throw new Error('当前媒体或处理状态已改变，请重新选择歌词。');
+      detachLyricsFile();
+      $('#lyrics').value=value.text;$('#lyricsFile').value='';
+      $('#fnLyrics').textContent=`来自 ${value.provider} · ${value.title} · ${value.format==='lrc'?'时间轴歌词':'纯文本'}`;
+      const active=MEDIA_ITEMS[MEDIA_ACTIVE_INDEX];
+      if(active){active.lyricsFile=null;active.lyricsFileName='';}
+      if(SRC==='asr'){
+        SRC='whisper';[...$('#segSrc').children].forEach(button=>button.classList.toggle('on',button.dataset.v===SRC));
+      }
+      clearFieldError($('#lyrics'));captureActiveMediaItem();refreshSrcUI();renderStylePreview();renderMediaQueue();
+      $('#lyrics').focus();
+    }});
+}
+updateInputSummary();
 </script>
 </body>
 </html>
