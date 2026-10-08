@@ -24,7 +24,7 @@ class RuntimeTests(unittest.TestCase):
         webui.ROOT=Path(self.temp.name)
         webui.OUT_ROOT=webui.ROOT/'out/webui'
         webui.OUT_ROOT.mkdir(parents=True)
-        webui.JOBS.clear(); webui.EDIT_DRAFTS.clear()
+        webui.JOBS.clear(); webui.EDIT_DRAFTS.clear(); webui.SYNC_EDITS.clear()
         self.server=ThreadingHTTPServer(('127.0.0.1',0),webui.Handler)
         threading.Thread(target=self.server.serve_forever,daemon=True).start()
         self.base=f'http://127.0.0.1:{self.server.server_port}'
@@ -32,7 +32,7 @@ class RuntimeTests(unittest.TestCase):
     def tearDown(self):
         webui.TASK_QUEUE.join()
         self.server.shutdown(); self.server.server_close()
-        webui.JOBS.clear(); webui.EDIT_DRAFTS.clear()
+        webui.JOBS.clear(); webui.EDIT_DRAFTS.clear(); webui.SYNC_EDITS.clear()
         webui.ROOT,webui.OUT_ROOT=self.old_root,self.old_out
         self.temp.cleanup()
 
@@ -211,6 +211,54 @@ class RuntimeTests(unittest.TestCase):
             webui.TASK_QUEUE.join()
         self.assertEqual(webui.JOBS[identifier].state,'cancelled')
         self.assertFalse((directory/'history_status.json').exists())
+
+    def test_sync_edit_blocks_delete_and_async_edit_through_alias(self):
+        directory=self.fixture(); entered=threading.Event(); release=threading.Event()
+        alias=identify(directory,webui.ROOT/'out')
+        replies=[]
+        def edit(data):
+            entered.set(); release.wait(5)
+            self.assertTrue(directory.exists())
+            return {'ok':True,'version':1}
+        def submit():
+            replies.append(requests.post(self.base+'/api/rerender',json={'job':'task'},timeout=10))
+        with patch.object(webui,'perform_edit',side_effect=edit):
+            worker=threading.Thread(target=submit); worker.start()
+            try:
+                self.assertTrue(entered.wait(5))
+                deletion=requests.post(self.base+'/api/history/delete',json={'jobs':[alias]},timeout=5)
+                self.assertEqual(deletion.status_code,400,deletion.text)
+                self.assertTrue(directory.exists())
+                concurrent=requests.post(self.base+'/api/rerender',json={'job':alias,'async':True},timeout=5)
+                self.assertEqual(concurrent.status_code,409,concurrent.text)
+            finally:
+                release.set(); worker.join(10)
+        self.assertEqual(replies[0].status_code,200,replies[0].text)
+        self.assertFalse(webui.SYNC_EDITS)
+        self.assertEqual(requests.post(self.base+'/api/history/delete',json={'jobs':[alias]},timeout=5).status_code,200)
+
+    def test_sync_edit_releases_directory_protection_on_failure(self):
+        directory=self.fixture()
+        with patch.object(webui,'perform_edit',side_effect=RuntimeError('render failed')), \
+                patch.object(webui.traceback,'print_exc'):
+            response=requests.post(self.base+'/api/rerender',json={'job':'task'},timeout=5)
+        self.assertEqual(response.status_code,500)
+        self.assertFalse(webui.SYNC_EDITS)
+        self.assertEqual(requests.post(self.base+'/api/history/delete',json={'jobs':['task']},timeout=5).status_code,200)
+
+    def test_busy_resource_does_not_leave_sync_edit_reservation(self):
+        self.fixture(); held=threading.Event(); release=threading.Event()
+        def lock_resource():
+            with webui.RESOURCE_LOCK:
+                held.set(); release.wait(5)
+        worker=threading.Thread(target=lock_resource); worker.start()
+        try:
+            self.assertTrue(held.wait(5))
+            response=requests.post(self.base+'/api/rerender',json={'job':'task'},timeout=5)
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertFalse(webui.SYNC_EDITS)
+        finally:
+            release.set(); worker.join(10)
 
     def test_zero_style_and_grouping_are_respected(self):
         from ass_builder import AssOptions

@@ -38,6 +38,7 @@ import urllib.parse
 import uuid
 import webbrowser
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -97,6 +98,26 @@ DEFAULT_OPTIONS = {
 }
 
 
+@lru_cache(maxsize=1)
+def available_fonts():
+    if sys.platform == 'win32':
+        return [name for path, name in FONT_CANDIDATES if Path(path).exists()]
+    executable = shutil.which('fc-list')
+    if not executable:
+        return []
+    try:
+        result = subprocess.run([executable, '--format=%{family}\n'], capture_output=True,
+                                text=True, encoding='utf-8', errors='replace', timeout=5)
+        if result.returncode:
+            return []
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = {name.strip() for line in result.stdout.splitlines()
+             for name in line.split(',') if name.strip()}
+    preferred = ['Noto Sans CJK SC', 'Noto Sans SC', 'Noto Sans CJK JP', 'Noto Sans JP', 'DejaVu Sans']
+    return [name for name in preferred if name in names] + sorted(names - set(preferred))
+
+
 # ==========================================================================
 # 任务状态
 # ==========================================================================
@@ -133,6 +154,7 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 LOCK = threading.RLock()
+SYNC_EDITS: set[Path] = set()  # Canonical directories protected by legacy synchronous edits.
 EDIT_LOCK = threading.Lock()
 EDIT_DRAFTS: dict[str, dict] = {}
 
@@ -401,6 +423,9 @@ def capabilities() -> dict:
     whisper = has("whisper", "stable_whisper", "torch")
     qwen = has("qwen_asr", "transformers")
     return {
+        "timed": cap(True, ""),
+        "demucs": cap(has('demucs', 'torch', 'torchaudio'),
+                       "去除人声需要 Demucs 依赖；可选择保留原唱或提供独立音轨。"),
         "whisper": cap(whisper,
                        "需要 Whisper 字幕环境：运行 setup_guide.bat 选择 [1]"),
         "whisper_models": sorted(p.stem for p in whisper_dir.glob("*.pt")) if whisper_dir.is_dir() else [],
@@ -1284,13 +1309,17 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ctype + '; charset=utf-8', (ASSETS / name).read_bytes())
             if u.path == "/api/meta":
                 from lyrics_search import metadata as lyrics_search_metadata
+                fonts = available_fonts()
+                defaults = {**DEFAULT_OPTIONS}
+                if fonts and defaults['font'] not in fonts:
+                    defaults['font'] = fonts[0]
                 return self._json({
                     "features": {"multi_anchor": True, "strict_timeline_order": True,
                                  'async_edit': True, 'persistent_queue': True, 'lyrics_search': True},
                     "lyrics_search": {**lyrics_search_metadata(),
                                       'privacy': '仅在主动搜索时发送歌名和艺人，不发送媒体或本地歌词'},
-                    "fonts": [n for f, n in FONT_CANDIDATES if Path(f).exists()],
-                    "defaults": DEFAULT_OPTIONS,
+                    "fonts": fonts,
+                    "defaults": defaults,
                     "demucs": ["htdemucs_ft", "htdemucs", "mdx_extra"],
                     "langs": ["auto", "zh", "en", "ja"],
                     "vocoders": ["qwen", "wav2vec2"],
@@ -1300,7 +1329,7 @@ class Handler(BaseHTTPRequestHandler):
                     "capabilities": capabilities(),
                 })
             if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js',
-                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css'):
+                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css', '/lyrics_format.js'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
@@ -1402,7 +1431,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not job:
                         return self._json({'error':'未保存可重试任务'},404)
                     directory = job.dir.resolve()
-                    if any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
+                    if directory in SYNC_EDITS or any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
                         return self._json({'error':'此记录已有任务在队列中'},409)
                     if job.state not in {'interrupted','error','cancelled'}:
                         return self._json({'error':'只有中断、失败或取消的任务可以重新开始'},409)
@@ -1414,6 +1443,7 @@ class Handler(BaseHTTPRequestHandler):
                 identifiers = d.get('jobs') or []
                 with LOCK:
                     active = [j.dir for j in JOBS.values() if j.state in ('queued','running')]
+                    active.extend(SYNC_EDITS)
                     from local_history import delete
                     return self._json({'ok': True, 'removed': delete(ROOT / 'out', identifiers, OUT_ROOT, active)})
             return self._json({"error": "not found"}, 404)
@@ -1657,10 +1687,10 @@ class Handler(BaseHTTPRequestHandler):
         job_id = data.get('job') or ''
         with LOCK:
             original = JOBS.get(job_id)
-            directory = original.dir if original else saved_directory(job_id)
+            directory = (original.dir if original else saved_directory(job_id)).resolve()
             if not (directory/'job.json').is_file():
                 return self._json({'error':'任务目录缺少 job.json，无法调整'},400)
-            if any(j.dir.resolve()==directory.resolve() and j.state in {'queued','running'} for j in JOBS.values()):
+            if directory in SYNC_EDITS or any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
                 return self._json({'error':'此记录已有任务在处理'},409)
             if data.get('async') is True:
                 identifier = 'edit_'+uuid.uuid4().hex[:16]
@@ -1668,14 +1698,20 @@ class Handler(BaseHTTPRequestHandler):
                     storage_dir=OUT_ROOT/'.tasks'/identifier,target_job=job_id)
                 enqueue_job(operation,data)
                 return self._json({'operation_job':identifier},202)
-        # Keep the synchronous contract for older clients; use the same resource
-        # lock as generation so there is no start/edit race.
-        if not RESOURCE_LOCK.acquire(blocking=False):
-            return self._json({'error':'处理队列正在使用模型，请使用异步调整'},409)
+            # Reserve while holding LOCK, so deletion and async submissions
+            # cannot slip between validation and the actual synchronous edit.
+            SYNC_EDITS.add(directory)
         try:
-            return self._json(perform_edit(data))
+            # Queue workers acquire RESOURCE_LOCK before LOCK; keep that order.
+            if not RESOURCE_LOCK.acquire(blocking=False):
+                return self._json({'error':'处理队列正在使用模型，请使用异步调整'},409)
+            try:
+                return self._json(perform_edit(data))
+            finally:
+                RESOURCE_LOCK.release()
         finally:
-            RESOURCE_LOCK.release()
+            with LOCK:
+                SYNC_EDITS.discard(directory)
 
     def _file(self, rel: str):
         parts = [urllib.parse.unquote(x) for x in rel.split("/") if x]

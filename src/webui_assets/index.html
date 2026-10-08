@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/review.css">
 <script src="/lyric_waveform.js"></script>
 <script src="/task_client.js"></script>
+<script src="/lyrics_format.js"></script>
 <script src="/lyrics_search.js"></script>
 <link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/lyrics_search.css">
@@ -248,6 +249,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <button data-v="whisper" class="on">已有歌词</button>
         <button data-v="sofa">日语歌声细化</button>
         <button data-v="asr">自动转写</button>
+        <button data-v="timed">逐字时间</button>
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
       <div class="hint" id="sourceAvailability" role="status">正在检查本机功能…</div>
@@ -690,7 +692,7 @@ boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('�
 // 未安装的功能置灰并说明原因，避免提交后才在日志里看到缺少模块。
 function applyCapabilities(caps){
   CAPABILITIES=caps||{};
-  for(const src of ['whisper', 'sofa', 'asr']){
+  for(const src of ['whisper', 'sofa', 'asr', 'timed']){
     const cap = CAPABILITIES[src], b = document.querySelector(`#segSrc button[data-v="${src}"]`);
     if(!b)continue;
     b.dataset.availableLabel ||= b.textContent;
@@ -713,9 +715,10 @@ function applyCapabilities(caps){
   refreshSrcUI();
 }
 function refreshRunAvailability(){
-  const state=TaskClient.generationState(CAPABILITIES,SRC,EDITING||GENERATION_BUSY);
+  const needsSeparation=SRC==='timed'&&VOCAL==='remove'&&$('#separate').checked&&!$('#track').files[0];
+  const state=TaskClient.generationState(CAPABILITIES,SRC,EDITING||GENERATION_BUSY,needsSeparation);
   $('#btnRun').disabled=!state.allowed;$('#btnRun').title=state.reason;
-  const source=TaskClient.generationState(CAPABILITIES,SRC);
+  const source=TaskClient.generationState(CAPABILITIES,SRC,false,needsSeparation);
   $('#sourceAvailability').textContent=source.reason;
   $('#sourceAvailability').classList.toggle('hidden',source.allowed);
   globalThis.LYRICS_SEARCH?.refreshAvailability?.();
@@ -765,7 +768,9 @@ function seg(id, cb){
   });
 }
 let VOCAL = 'remove', LANG = 'auto', SRC = 'whisper';
-seg('#segVocal', v => VOCAL = v);
+seg('#segVocal', v => { VOCAL = v; refreshRunAvailability(); });
+$('#separate').addEventListener('change',refreshRunAvailability);
+$('#track').addEventListener('change',refreshRunAvailability);
 seg('#segLang',  v => {
   LANG = v;
   if(!MEDIA_SWITCHING && MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
@@ -776,11 +781,12 @@ seg('#segLang',  v => {
 });
 seg('#segSrc',   v => { SRC = v; refreshSrcUI(); });
 
-// 歌词来源三选一（分段选择器天然互斥，不会出现「勾了一个另一个的选项还亮着」）
+// 歌词处理方式互斥；逐字时间直接渲染，不需要对齐模型。
 const SRC_HINT = {
   whisper: '已有歌词：把你提供的歌词对到演唱时间上。生成后可试听并微调。',
   sofa: '日语歌声细化：适合日语歌曲，尝试更细地定位字音。此功能仍在实验中，请试听确认。',
   asr: '自动转写：没有歌词时，先识别歌词草稿再生成字幕。请选对语言，并核对可能识别错的字。',
+  timed: '逐字时间：使用增强 LRC 已有时间直接生成字幕，无需对齐模型。保留原唱或提供独立音轨时无需人声分离。',
 };
 function refreshSrcUI(){
   if(SRC==='sofa'){
@@ -790,12 +796,14 @@ function refreshSrcUI(){
   }
   $('#segLang').querySelectorAll('button').forEach(button=>button.disabled=SRC==='sofa'&&button.dataset.v!=='ja');
   $('#srcHint').textContent = SRC_HINT[SRC] || '';
+  $('#timedMode').disabled=SRC==='timed';
+  if(SRC==='timed')$('#timedMode').value='warp';
   const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile;
   $('#whisperOpts').classList.toggle('hidden', SRC === 'sofa');
   $('#sofaHint').classList.toggle('hidden', SRC !== 'sofa');
   $('#asrHint').classList.toggle('hidden', !(SRC === 'asr' && LANG === 'auto'));
   $('#whisperNeedLyrics').classList.toggle('hidden',
-      !((SRC === 'whisper' || SRC === 'sofa') && !hasLyrics));
+      !(SRC !== 'asr' && !hasLyrics));
   refreshRunAvailability();
 }
 $('#lyrics').addEventListener('input', refreshSrcUI);
@@ -1124,7 +1132,7 @@ function updatePreviewPositionLimit(){
 function renderStylePreview(){
   const preview=$('#stylePreview'),captions=$('#stylePreviewCaptions');if(!preview||!captions)return;
   const count=Number($('#lineCount')?.value)||2,fs=Number($('#fontSize')?.value)||66;
-  const supplied=($('#lyrics')?.value||'').split(/\r?\n/).map(line=>line.replace(/^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+/,'').trim()).filter(Boolean);
+  const supplied=LyricsFormat.previewLines($('#lyrics')?.value||'');
   const lines=supplied.length?supplied.slice(0,count):['当前演唱歌词','下一句预览','后续歌词示例'].slice(0,count);
   const positions=ACTIVE_LINE_POSITIONS||normalizeLinePositions(STYLE_DEFAULTS);
   const selected=positionLineIndex();
@@ -1197,7 +1205,8 @@ async function startMediaJob(media, config){
 }
 $('#btnRun').addEventListener('click', async () => {
   if(GENERATION_BUSY||EDITING)return;
-  const sourceState=TaskClient.generationState(CAPABILITIES,SRC);
+  const needsSeparation=SRC==='timed'&&VOCAL==='remove'&&$('#separate').checked&&!$('#track').files[0];
+  const sourceState=TaskClient.generationState(CAPABILITIES,SRC,false,needsSeparation);
   if(!sourceState.allowed){refreshRunAvailability();showErr(sourceState.reason);return;}
   captureActiveMediaItem();
   const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
@@ -1212,6 +1221,11 @@ $('#btnRun').addEventListener('click', async () => {
       return fieldError($('#lyrics'), $('#lyricsErr'),
         `请为以下文件填写或选择歌词，或选择“自动转写”：\n${missing.map(item => item.file.name).join('\n')}`);
     }
+  }
+  if(SRC==='timed'){
+    const invalid=items.filter(item=>!LyricsFormat.hasWordTimes(item.lyrics));
+    if(invalid.length)return fieldError($('#lyrics'),$('#lyricsErr'),
+      `“逐字时间”需要每行都包含逐词时间的增强 LRC；以下文件需补齐时间或选择已有歌词对齐：\n${invalid.map(item=>item.file.name).join('\n')}`);
   }
   let config;
   try {

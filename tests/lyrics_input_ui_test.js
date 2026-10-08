@@ -37,7 +37,7 @@ function harness() {
     $: get, document: {createElement: element}, TaskClient,
     MEDIA_ITEMS: items, MEDIA_QUEUE: [], MEDIA_ACTIVE_INDEX: 0, MEDIA_SELECTION_VERSION: 1,
     MEDIA_SWITCHING: false, LYRICS_FILE_READ_VERSION: 0, LYRICS_PENDING_FILE_READ: null,
-    LYRICS_LOOKUP_CONTEXT: null, SRC: 'whisper', LANG: 'en', SRC_HINT: {},
+    LYRICS_LOOKUP_CONTEXT: null, SRC: 'whisper', LANG: 'en', VOCAL: 'keep', SRC_HINT: {},
     GENERATION_BUSY: false, EDITING: false, CAPABILITIES: {whisper: {ok: true}},
     styleOptions: () => ({}), defaultStyleOptions: () => ({}), applyStyleOptions() {}, setStylePreviewFile() {},
     clearFieldError() {}, showErr: error => errors.push(error),

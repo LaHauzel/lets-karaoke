@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 const TaskClient = require('../src/webui_assets/task_client.js');
+const LyricsFormat = require('../src/webui_assets/lyrics_format.js');
 const page = fs.readFileSync(path.join(__dirname, '../src/webui_assets/index.html'), 'utf8');
 const unavailable = {
   whisper: {ok: false, reason: '缺少 Whisper 依赖'},
@@ -36,7 +37,7 @@ function harness() {
     if (!elements.has(selector)) elements.set(selector, element());
     return elements.get(selector);
   };
-  const sources = ['whisper', 'sofa', 'asr'].map(source => {
+  const sources = ['whisper', 'sofa', 'asr', 'timed'].map(source => {
     const button = element(source); button.dataset.v = source;
     button.classList.toggle('on', source === 'whisper'); return button;
   });
@@ -52,7 +53,7 @@ function harness() {
   get('#whisperModel').options = ['large-v3', 'medium'].map(element);
   get('#whisperModel').value = 'large-v3';
   const context = vm.createContext({
-    TaskClient, CAPABILITIES: null, SRC: 'whisper', LANG: 'auto', VOCAL: 'remove',
+    TaskClient, LyricsFormat, CAPABILITIES: null, SRC: 'whisper', LANG: 'auto', VOCAL: 'remove',
     GENERATION_BUSY: false, EDITING: false, EDITABLE: true, EDIT_OPERATION: null,
     JOB: 'historic', EDIT_DRAFT_ID: null, SAVED_TASKS: {}, BATCH_JOBS: new Set(),
     BATCH_CANCEL_REQUESTED: false, MEDIA_ACTIVE_INDEX: -1, MEDIA_ITEMS: [], SRC_HINT: {},
@@ -152,6 +153,48 @@ const tests = {
     assert.equal(h.uploads.length, 1); assert.equal(h.uploads[0].config.source, 'asr');
     assert.equal(h.context.GENERATION_BUSY, false); assert.equal(h.get('#btnRun').disabled, true);
     assert.equal(h.get('#btnRerender').disabled, false);
+  },
+  async timed_source_renders_without_alignment_dependencies() {
+    const h = harness(); h.media();
+    h.context.MEDIA_ITEMS[0].lyrics = '[00:01.00]<00:01.00~00:02.00>Hello <00:02.00~00:03.00>world';
+    h.caps({...unavailable, timed: {ok: true}});
+    assert.equal(h.context.SRC, 'timed');
+    assert.equal(h.get('#btnRun').disabled, false);
+    assert.equal(h.get('#timedMode').disabled, true);
+    await h.run();
+    assert.equal(h.uploads.length, 1);
+    assert.equal(h.uploads[0].config.source, 'timed');
+    assert.equal(h.uploads[0].config.useAsr, false);
+    assert.equal(h.uploads[0].config.timedMode, 'warp');
+  },
+  async timed_source_rejects_mixed_batch_before_submitting_any_file() {
+    const h = harness(); h.media();
+    h.context.MEDIA_ITEMS[0].lyrics = '[00:01.00]<00:01.00>ready';
+    h.context.MEDIA_ITEMS.push({file: {name: 'plain.wav'}, lyrics: 'not timed', lang: 'en'});
+    h.caps({...unavailable, timed: {ok: true}});
+    await h.run();
+    assert.equal(h.uploads.length, 0);
+    assert.match(h.errors[0], /plain.wav/);
+  },
+  timed_source_busy_and_editing_still_disable_generation() {
+    const h = harness(); h.caps({...unavailable, timed: {ok: true}});
+    h.context.GENERATION_BUSY = true; h.context.refreshRunAvailability();
+    assert.equal(h.get('#btnRun').disabled, true);
+    h.context.GENERATION_BUSY = false; h.context.setEditBusy(true);
+    assert.equal(h.get('#btnRun').disabled, true);
+    h.context.setEditBusy(false);
+    assert.equal(h.get('#btnRun').disabled, false);
+  },
+  timed_vocal_removal_requires_demucs_but_original_and_custom_audio_do_not() {
+    const h = harness(); h.get('#separate').checked = true;
+    h.caps({...unavailable, timed: {ok: true}, demucs: {ok: false}});
+    assert.equal(h.get('#btnRun').disabled, true);
+    assert.match(h.get('#sourceAvailability').textContent, /Demucs/);
+    h.context.VOCAL = 'keep'; h.context.refreshRunAvailability();
+    assert.equal(h.get('#btnRun').disabled, false);
+    h.context.VOCAL = 'remove'; h.get('#track').files = [{name: 'instrumental.wav'}];
+    h.context.refreshRunAvailability();
+    assert.equal(h.get('#btnRun').disabled, false);
   },
 };
 (async () => {
