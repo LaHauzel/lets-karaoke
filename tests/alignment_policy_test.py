@@ -4,10 +4,10 @@ import sys
 import unittest
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
-from alignment_policy import bounded_refine, project_timeline, resolve_rules
+from alignment_policy import DEFAULT_PROFILE, bounded_refine, project_timeline, resolve_rules
 from asr_lyrics import AsrLine, Segment
-from whisper_align import (DEFAULT_RULES, merge_lines_by_confidence,
-                           merge_lines_monotonic, postprocess_lines)
+from whisper_align import (DEFAULT_RULES, build_lines, merge_lines_by_confidence,
+                           merge_lines_monotonic, postprocess_lines, vocal_intervals)
 
 
 def line(start, end, prob=.9):
@@ -15,6 +15,37 @@ def line(start, end, prob=.9):
 
 
 class PolicyTests(unittest.TestCase):
+    def test_default_preserves_long_pause_instead_of_inventing_a_singing_rate(self):
+        self.assertEqual(DEFAULT_PROFILE, 'automatic')
+        for offset in [0, 37.5, 1000]:
+            words = [['alpha', offset+1, offset+2, .9], ['beta', offset+15, offset+20, .9]]
+            rows, report = build_lines(words, ['alpha beta'])
+            self.assertEqual((rows[0].start, rows[0].end), (offset+1, offset+20))
+            self.assertEqual(report['reflowed_lines'], 0)
+            self.assertEqual(report['overlong_fixed_lines'], 0)
+
+    def test_default_keeps_low_confidence_text_at_its_original_position(self):
+        for offset in [0, 37.5, 1000]:
+            rows = [line(offset+20, offset+24, .01)]
+            result = postprocess_lines(rows, [(offset+1, offset+10)])
+            self.assertEqual(len(rows), 1)
+            self.assertAlmostEqual(rows[0].start, offset+20, places=7)
+            self.assertAlmostEqual(rows[0].end, offset+24, places=7)
+            self.assertEqual(result['uncertain'], [0])
+
+    def test_quiet_short_phrase_is_not_removed_by_default_relative_filter(self):
+        import tempfile
+        import numpy as np
+        import soundfile as sf
+        sample_rate = 8000
+        tone = np.sin(2*np.pi*300*np.arange(sample_rate)/sample_rate)
+        audio = np.concatenate([tone*.5, tone*0, tone*.05, tone*0, tone*.5])
+        with tempfile.TemporaryDirectory() as folder:
+            source = Path(folder)/'phrases.wav'
+            sf.write(source, audio, sample_rate)
+            self.assertEqual(len(vocal_intervals(source, thr_factor=.01)), 3)
+            self.assertEqual(len(vocal_intervals(source, thr_factor=.01, rel_drop_db=6)), 2)
+
     def test_balanced_tail_constraint_runs_after_minimum_duration(self):
         lines = [line(0, .5, .9), line(.51, .55, .9)]
         postprocess_lines(lines, [(0, .7)],

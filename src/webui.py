@@ -38,6 +38,7 @@ import urllib.parse
 import uuid
 import webbrowser
 from dataclasses import asdict, dataclass, field
+from functools import lru_cache
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -59,7 +60,7 @@ WORKER_LOCK = threading.Lock()
 WORKER = None
 STOP_WORKER = threading.Event()
 
-from alignment_policy import resolve_rules, schema
+from alignment_policy import DEFAULT_PROFILE, resolve_rules, schema
 from whisper_align import DEFAULT_RULES, postprocess_lines
 
 import model_paths  # noqa: E402,F401  （模型统一在项目 models\ 下，须早于模型加载）
@@ -95,6 +96,26 @@ DEFAULT_OPTIONS = {
     "tail_ms": 320,
     "min_gap_ms": 12,
 }
+
+
+@lru_cache(maxsize=1)
+def available_fonts():
+    if sys.platform == 'win32':
+        return [name for path, name in FONT_CANDIDATES if Path(path).exists()]
+    executable = shutil.which('fc-list')
+    if not executable:
+        return []
+    try:
+        result = subprocess.run([executable, '--format=%{family}\n'], capture_output=True,
+                                text=True, encoding='utf-8', errors='replace', timeout=5)
+        if result.returncode:
+            return []
+    except (OSError, subprocess.SubprocessError):
+        return []
+    names = {name.strip() for line in result.stdout.splitlines()
+             for name in line.split(',') if name.strip()}
+    preferred = ['Noto Sans CJK SC', 'Noto Sans SC', 'Noto Sans CJK JP', 'Noto Sans JP', 'DejaVu Sans']
+    return [name for name in preferred if name in names] + sorted(names - set(preferred))
 
 
 # ==========================================================================
@@ -133,6 +154,7 @@ class Job:
 
 JOBS: dict[str, Job] = {}
 LOCK = threading.RLock()
+SYNC_EDITS: set[Path] = set()  # Canonical directories protected by legacy synchronous edits.
 EDIT_LOCK = threading.Lock()
 EDIT_DRAFTS: dict[str, dict] = {}
 
@@ -401,6 +423,9 @@ def capabilities() -> dict:
     whisper = has("whisper", "stable_whisper", "torch")
     qwen = has("qwen_asr", "transformers")
     return {
+        "timed": cap(True, ""),
+        "demucs": cap(has('demucs', 'torch', 'torchaudio'),
+                       "去除人声需要 Demucs 依赖；可选择保留原唱或提供独立音轨。"),
         "whisper": cap(whisper,
                        "需要 Whisper 字幕环境：运行 setup_guide.bat 选择 [1]"),
         "whisper_models": sorted(p.stem for p in whisper_dir.glob("*.pt")) if whisper_dir.is_dir() else [],
@@ -541,7 +566,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             if cancel():
                 raise RuntimeError("cancelled")
             cfg_kwargs["lyrics_text"] = (job.dir / "asr_lyrics.plain.txt").read_text(encoding="utf-8")
-            cfg_kwargs.setdefault("alignment_profile", "balanced")
+            cfg_kwargs.setdefault("alignment_profile", DEFAULT_PROFILE)
             cfg_kwargs.setdefault("align_dual", True)
             cfg_kwargs.setdefault("align_on_vocals", True)
             cfg_kwargs.setdefault("vocal_guide", True)
@@ -602,11 +627,11 @@ def _vc_thr(rules: dict | None) -> float:
 
 
 def _vc_rel(rules: dict | None) -> float:
-    """相对能量剔除阈值（dB）——规则可覆盖，默认 6.0；设 0 关闭。"""
+    """相对能量剔除默认关闭；只有显式参数才启用。"""
     try:
-        return float((rules or {}).get("rel_drop_db", 6.0))
+        return float((rules or {}).get("rel_drop_db", 0.0))
     except (TypeError, ValueError):
-        return 6.0
+        return 0.0
 
 
 def _audio44(job: Job, cfg_kwargs: dict, tag: str = "align",
@@ -784,7 +809,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     import textgrid as tg
     rep = {"refined": 0, "failed": [], "fallback": [],
            "rules": resolve_rules(DEFAULT_RULES, cfg_kwargs.get("rules"),
-                                  cfg_kwargs.get("alignment_profile", "balanced"))}
+                                  cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE))}
     conf_csv = seg_dir / "confidence" / "ja_job_dict.csv"
     conf = {}
     if conf_csv.exists():
@@ -876,7 +901,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
                 max_seg_s=float((rep.get("rules") or {}).get("tx_max_seg", 8.0)),
                 cap_frac=float((rep.get("rules") or {}).get("tx_cap_frac", 0.10)))
         postprocess_lines(asr_lines, iv2, cfg_kwargs.get("rules"),
-                          cfg_kwargs.get("alignment_profile", "balanced"))
+                          cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE))
     except Exception:  # noqa: BLE001
         pass
 
@@ -922,7 +947,7 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     use_vg = bool(cfg_kwargs.get("vocal_guide", True))
     use_align_vocals = bool(cfg_kwargs.get("align_on_vocals", True))
     use_dual = bool(cfg_kwargs.get("align_dual", True))
-    profile = cfg_kwargs.get("alignment_profile", "balanced")
+    profile = cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE)
     user_rules = resolve_rules(DEFAULT_RULES, cfg_kwargs.get("rules"), profile)
 
     # 取歌词文本（文本框或文件）
@@ -1284,23 +1309,28 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send(200, ctype + '; charset=utf-8', (ASSETS / name).read_bytes())
             if u.path == "/api/meta":
                 from lyrics_search import metadata as lyrics_search_metadata
+                fonts = available_fonts()
+                defaults = {**DEFAULT_OPTIONS}
+                if fonts and defaults['font'] not in fonts:
+                    defaults['font'] = fonts[0]
                 return self._json({
                     "features": {"multi_anchor": True, "strict_timeline_order": True,
                                  'async_edit': True, 'persistent_queue': True, 'lyrics_search': True},
                     "lyrics_search": {**lyrics_search_metadata(),
                                       'privacy': '仅在主动搜索时发送歌名和艺人，不发送媒体或本地歌词'},
-                    "fonts": [n for f, n in FONT_CANDIDATES if Path(f).exists()],
-                    "defaults": DEFAULT_OPTIONS,
+                    "fonts": fonts,
+                    "defaults": defaults,
                     "demucs": ["htdemucs_ft", "htdemucs", "mdx_extra"],
                     "langs": ["auto", "zh", "en", "ja"],
                     "vocoders": ["qwen", "wav2vec2"],
                     "rule_schema": schema(DEFAULT_RULES),
                     "rule_profiles": {p: resolve_rules(DEFAULT_RULES, profile=p)
                                       for p in ("balanced", "automatic", "legacy")},
+                    "rule_default_profile": DEFAULT_PROFILE,
                     "capabilities": capabilities(),
                 })
             if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js',
-                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css'):
+                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css', '/lyrics_format.js'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
@@ -1402,7 +1432,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not job:
                         return self._json({'error':'未保存可重试任务'},404)
                     directory = job.dir.resolve()
-                    if any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
+                    if directory in SYNC_EDITS or any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
                         return self._json({'error':'此记录已有任务在队列中'},409)
                     if job.state not in {'interrupted','error','cancelled'}:
                         return self._json({'error':'只有中断、失败或取消的任务可以重新开始'},409)
@@ -1414,6 +1444,7 @@ class Handler(BaseHTTPRequestHandler):
                 identifiers = d.get('jobs') or []
                 with LOCK:
                     active = [j.dir for j in JOBS.values() if j.state in ('queued','running')]
+                    active.extend(SYNC_EDITS)
                     from local_history import delete
                     return self._json({'ok': True, 'removed': delete(ROOT / 'out', identifiers, OUT_ROOT, active)})
             return self._json({"error": "not found"}, 404)
@@ -1563,7 +1594,7 @@ class Handler(BaseHTTPRequestHandler):
                                     not in (None, "", "0", "false", "False"))
         # Both alignment routes share the same validated defaults and overrides.
         if kwargs["whisper_align"] or kwargs["sofa_align"] or asr_mode:
-            kwargs["alignment_profile"] = fields.get("alignment_profile") or "balanced"
+            kwargs["alignment_profile"] = fields.get("alignment_profile") or DEFAULT_PROFILE
             try:
                 raw_rules = json.loads(fields.get("rules") or "{}")
                 kwargs["rules"] = resolve_rules(DEFAULT_RULES, raw_rules,
@@ -1657,10 +1688,10 @@ class Handler(BaseHTTPRequestHandler):
         job_id = data.get('job') or ''
         with LOCK:
             original = JOBS.get(job_id)
-            directory = original.dir if original else saved_directory(job_id)
+            directory = (original.dir if original else saved_directory(job_id)).resolve()
             if not (directory/'job.json').is_file():
                 return self._json({'error':'任务目录缺少 job.json，无法调整'},400)
-            if any(j.dir.resolve()==directory.resolve() and j.state in {'queued','running'} for j in JOBS.values()):
+            if directory in SYNC_EDITS or any(j.dir.resolve()==directory and j.state in {'queued','running'} for j in JOBS.values()):
                 return self._json({'error':'此记录已有任务在处理'},409)
             if data.get('async') is True:
                 identifier = 'edit_'+uuid.uuid4().hex[:16]
@@ -1668,14 +1699,26 @@ class Handler(BaseHTTPRequestHandler):
                     storage_dir=OUT_ROOT/'.tasks'/identifier,target_job=job_id)
                 enqueue_job(operation,data)
                 return self._json({'operation_job':identifier},202)
-        # Keep the synchronous contract for older clients; use the same resource
-        # lock as generation so there is no start/edit race.
-        if not RESOURCE_LOCK.acquire(blocking=False):
-            return self._json({'error':'处理队列正在使用模型，请使用异步调整'},409)
+            # Reserve while holding LOCK, so deletion and async submissions
+            # cannot slip between validation and the actual synchronous edit.
+            SYNC_EDITS.add(directory)
+        response_status = 200
         try:
-            return self._json(perform_edit(data))
+            # Queue workers acquire RESOURCE_LOCK before LOCK; keep that order.
+            if not RESOURCE_LOCK.acquire(blocking=False):
+                response = {'error':'处理队列正在使用模型，请使用异步调整'}
+                response_status = 409
+            else:
+                try:
+                    response = perform_edit(data)
+                finally:
+                    RESOURCE_LOCK.release()
         finally:
-            RESOURCE_LOCK.release()
+            with LOCK:
+                SYNC_EDITS.discard(directory)
+        # Release reservations before publishing the response, so a client
+        # that has received completion can immediately submit another action.
+        return self._json(response, response_status)
 
     def _file(self, rel: str):
         parts = [urllib.parse.unquote(x) for x in rel.split("/") if x]

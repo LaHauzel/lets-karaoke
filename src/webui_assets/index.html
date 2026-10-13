@@ -9,6 +9,7 @@
 <link rel="stylesheet" href="/review.css">
 <script src="/lyric_waveform.js"></script>
 <script src="/task_client.js"></script>
+<script src="/lyrics_format.js"></script>
 <script src="/lyrics_search.js"></script>
 <link rel="stylesheet" href="/theme.css">
 <link rel="stylesheet" href="/lyrics_search.css">
@@ -248,10 +249,11 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         <button data-v="whisper" class="on">已有歌词</button>
         <button data-v="sofa">日语歌声细化</button>
         <button data-v="asr">自动转写</button>
+        <button data-v="timed">逐字时间</button>
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
       <div class="hint" id="sourceAvailability" role="status">正在检查本机功能…</div>
-      <details class="settings-details"><summary>对齐设置 <span>默认参数适用于大多数任务</span></summary>
+      <details class="settings-details" id="alignmentSettings"><summary>对齐设置 <span>默认参数适用于大多数任务</span></summary>
       <div id="whisperOpts"
            style="font-size:12.5px;color:var(--tx2);margin:-2px 0 9px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -274,8 +276,8 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </div>
       <label>对齐策略
         <select id="alignmentProfile">
-          <option value="balanced">自动均衡（当前测试推荐 · 保留长音，最后检查尾界）</option>
-          <option value="automatic">轻量修正（实验 · 仅有限修正边界）</option>
+          <option value="automatic">保留声学锚点（默认 · 仅在附近微调）</option>
+          <option value="balanced">启发式均衡（实验 · 可能重排行句）</option>
           <option value="legacy">旧规则（对照 · 允许整行重排和搬移）</option>
         </select>
       </label>
@@ -294,7 +296,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       <div id="ruleHelp" class="rule-help hidden" role="dialog" aria-label="高级参数说明">
         <button type="button" class="help-close" id="closeRuleHelp" aria-label="关闭说明">×</button>
         <h3>高级参数说明 <span>通常保持默认</span></h3>
-        <p class="help-note">这些参数是在“模型时间轴”之后做的有限修正。先听成片，再只调整最相关的一两项。</p>
+        <p class="help-note">默认保留模型声学锚点。均衡与旧策略含重排、搬移等启发式，可能改变真实长音与间奏位置；启用后请试听复核。</p>
         <h4>边界与时间轴</h4>
         <dl>
           <dt>boundary_limit · 自动边界最大调整</dt><dd>限制起点或尾点吸附的最大距离。调大可能修复偏移，但更容易吸附到相邻声音。</dd>
@@ -504,6 +506,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
     <div class="card generation-card" id="generationCard">
       <h2><span class="n">3</span>生成与复核 <span class="card-caption">处理将在后台队列继续</span></h2>
       <div id="inputReadiness" class="input-readiness" aria-live="polite"><span>○ 尚未选择媒体</span><span>○ 准备歌词</span></div>
+      <p id="processingPlan" class="hint" aria-live="polite">选择歌词处理方式后，会在这里显示本次处理流程。</p>
       <button class="primary" id="btnRun" disabled>开始生成卡拉OK</button>
       <div class="barwrap" style="margin-top:12px">
         <div class="lbl"><span id="stageTxt">待开始</span><span id="pctTxt">0%</span></div>
@@ -668,6 +671,7 @@ async function boot(){
   ANCHOR_API_SUPPORTED=meta.features?.multi_anchor===true;
   ASYNC_EDIT_SUPPORTED=meta.features?.async_edit===true;
   window.RULE_META = meta;
+  $('#alignmentProfile').value=meta.rule_default_profile||'automatic';
   applyCapabilities(meta.capabilities);
   renderRules();
   const fs = $('#font');
@@ -690,7 +694,7 @@ boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('�
 // 未安装的功能置灰并说明原因，避免提交后才在日志里看到缺少模块。
 function applyCapabilities(caps){
   CAPABILITIES=caps||{};
-  for(const src of ['whisper', 'sofa', 'asr']){
+  for(const src of ['whisper', 'sofa', 'asr', 'timed']){
     const cap = CAPABILITIES[src], b = document.querySelector(`#segSrc button[data-v="${src}"]`);
     if(!b)continue;
     b.dataset.availableLabel ||= b.textContent;
@@ -713,11 +717,15 @@ function applyCapabilities(caps){
   refreshSrcUI();
 }
 function refreshRunAvailability(){
-  const state=TaskClient.generationState(CAPABILITIES,SRC,EDITING||GENERATION_BUSY);
+  const needsSeparation=SRC==='timed'&&VOCAL==='remove'&&$('#separate').checked&&!$('#track').files[0];
+  const state=TaskClient.generationState(CAPABILITIES,SRC,EDITING||GENERATION_BUSY,needsSeparation);
   $('#btnRun').disabled=!state.allowed;$('#btnRun').title=state.reason;
-  const source=TaskClient.generationState(CAPABILITIES,SRC);
+  const source=TaskClient.generationState(CAPABILITIES,SRC,false,needsSeparation);
   $('#sourceAvailability').textContent=source.reason;
   $('#sourceAvailability').classList.toggle('hidden',source.allowed);
+  const route={whisper:'已有歌词对齐',sofa:'逐行定位 → 日语歌声细化',asr:'转写草稿 → 字幕生成',timed:'已有逐词时间 → 直接出片'}[SRC]||'';
+  const sound=$('#track').files[0]?'使用独立音轨':VOCAL==='keep'?'保留原唱':$('#separate').checked?'分离人声并使用伴奏':'保留原唱（未启用分离）';
+  $('#processingPlan').textContent=`${route} · ${sound}`;
   globalThis.LYRICS_SEARCH?.refreshAvailability?.();
   globalThis.updateInputSummary?.();
 }
@@ -765,7 +773,9 @@ function seg(id, cb){
   });
 }
 let VOCAL = 'remove', LANG = 'auto', SRC = 'whisper';
-seg('#segVocal', v => VOCAL = v);
+seg('#segVocal', v => { VOCAL = v; refreshRunAvailability(); });
+$('#separate').addEventListener('change',refreshRunAvailability);
+$('#track').addEventListener('change',refreshRunAvailability);
 seg('#segLang',  v => {
   LANG = v;
   if(!MEDIA_SWITCHING && MEDIA_ACTIVE_INDEX >= 0 && MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]){
@@ -776,11 +786,12 @@ seg('#segLang',  v => {
 });
 seg('#segSrc',   v => { SRC = v; refreshSrcUI(); });
 
-// 歌词来源三选一（分段选择器天然互斥，不会出现「勾了一个另一个的选项还亮着」）
+// 歌词处理方式互斥；逐字时间直接渲染，不需要对齐模型。
 const SRC_HINT = {
   whisper: '已有歌词：把你提供的歌词对到演唱时间上。生成后可试听并微调。',
   sofa: '日语歌声细化：适合日语歌曲，尝试更细地定位字音。此功能仍在实验中，请试听确认。',
   asr: '自动转写：没有歌词时，先识别歌词草稿再生成字幕。请选对语言，并核对可能识别错的字。',
+  timed: '逐字时间：使用增强 LRC 已有时间直接生成字幕，无需对齐模型。保留原唱或提供独立音轨时无需人声分离。',
 };
 function refreshSrcUI(){
   if(SRC==='sofa'){
@@ -790,12 +801,15 @@ function refreshSrcUI(){
   }
   $('#segLang').querySelectorAll('button').forEach(button=>button.disabled=SRC==='sofa'&&button.dataset.v!=='ja');
   $('#srcHint').textContent = SRC_HINT[SRC] || '';
+  $('#alignmentSettings').hidden=SRC==='timed';
+  $('#timedMode').disabled=SRC==='timed';
+  if(SRC==='timed')$('#timedMode').value='warp';
   const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile;
   $('#whisperOpts').classList.toggle('hidden', SRC === 'sofa');
   $('#sofaHint').classList.toggle('hidden', SRC !== 'sofa');
   $('#asrHint').classList.toggle('hidden', !(SRC === 'asr' && LANG === 'auto'));
   $('#whisperNeedLyrics').classList.toggle('hidden',
-      !((SRC === 'whisper' || SRC === 'sofa') && !hasLyrics));
+      !(SRC !== 'asr' && !hasLyrics));
   refreshRunAvailability();
 }
 $('#lyrics').addEventListener('input', refreshSrcUI);
@@ -1124,7 +1138,7 @@ function updatePreviewPositionLimit(){
 function renderStylePreview(){
   const preview=$('#stylePreview'),captions=$('#stylePreviewCaptions');if(!preview||!captions)return;
   const count=Number($('#lineCount')?.value)||2,fs=Number($('#fontSize')?.value)||66;
-  const supplied=($('#lyrics')?.value||'').split(/\r?\n/).map(line=>line.replace(/^\s*(?:\[\d{1,2}:\d{2}(?:\.\d{1,3})?\]\s*)+/,'').trim()).filter(Boolean);
+  const supplied=LyricsFormat.previewLines($('#lyrics')?.value||'');
   const lines=supplied.length?supplied.slice(0,count):['当前演唱歌词','下一句预览','后续歌词示例'].slice(0,count);
   const positions=ACTIVE_LINE_POSITIONS||normalizeLinePositions(STYLE_DEFAULTS);
   const selected=positionLineIndex();
@@ -1197,7 +1211,8 @@ async function startMediaJob(media, config){
 }
 $('#btnRun').addEventListener('click', async () => {
   if(GENERATION_BUSY||EDITING)return;
-  const sourceState=TaskClient.generationState(CAPABILITIES,SRC);
+  const needsSeparation=SRC==='timed'&&VOCAL==='remove'&&$('#separate').checked&&!$('#track').files[0];
+  const sourceState=TaskClient.generationState(CAPABILITIES,SRC,false,needsSeparation);
   if(!sourceState.allowed){refreshRunAvailability();showErr(sourceState.reason);return;}
   captureActiveMediaItem();
   const items = MEDIA_ITEMS.filter(item => item?.file && mediaFiles([item.file]).length);
@@ -1212,6 +1227,11 @@ $('#btnRun').addEventListener('click', async () => {
       return fieldError($('#lyrics'), $('#lyricsErr'),
         `请为以下文件填写或选择歌词，或选择“自动转写”：\n${missing.map(item => item.file.name).join('\n')}`);
     }
+  }
+  if(SRC==='timed'){
+    const invalid=items.filter(item=>!LyricsFormat.hasWordTimes(item.lyrics));
+    if(invalid.length)return fieldError($('#lyrics'),$('#lyricsErr'),
+      `“逐字时间”需要每行都包含逐词时间的增强 LRC；以下文件需补齐时间或选择已有歌词对齐：\n${invalid.map(item=>item.file.name).join('\n')}`);
   }
   let config;
   try {

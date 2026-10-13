@@ -2,6 +2,19 @@
 
 调查日期：2026-10-01。结论来自公开文档、仓库和源码审阅，未安装所有竞品，也未做同一批歌曲的跨产品准确率或耗时测试。价格按调查时公开页面记录，可能调整；宣传指标不能直接用来比较现场歌唱对齐质量。
 
+## 2026-10-13：对齐模型更新
+
+本轮只完成官方文档/源码调研和通用兼容修复。云端无 NVIDIA 设备，视频平台与 Hugging Face 请求被代理 403 拒绝，尚未完成真实现场的同条件模型比较。
+
+| 候选 | 可验证的适用信息 | 对本项目的判断 |
+| --- | --- | --- |
+| [HubertFA](https://github.com/wolfgitpr/HubertFA) / [v0.0.7 歌唱 ONNX 模型](https://github.com/wolfgitpr/HubertFA/releases) | 专为歌唱设计；公开多语种歌唱模型和推荐 ONNX 推理路线，含日语罗马音/音素字典 | 有针对性但与单曲无关的下一轮候选。需验证日语多摩拉字、英日混唱、多人合唱及字词回映射；尚无本项目对比指标证明优于现有后端 |
+| [Qwen3-ForcedAligner / Qwen3-ASR](https://github.com/QwenLM/Qwen3-ASR) | ForcedAligner 支持包括日语的 11 种语言及最长约 5 分钟输入；ASR 文档支持歌声/BGM；2026-06 发布原生 Transformers 支持 | ASR 的歌声支持不能直接当作 ForcedAligner 的歌唱精度证据。原生 Transformers/编译路线可另建环境测吞吐，不能盲目更新当前固定依赖 |
+| [SOFA](https://github.com/qiuqiao/SOFA) | 歌唱强制对齐；语言字典与 checkpoint 必须匹配 | 现有逐行细化路线继续作为对照；明确插值/兜底和音素映射风险，而不是按某一首歌选择阈值 |
+| [WhisperX](https://github.com/m-bain/whisperX) / wav2vec2 CTC | 语言相关音素模型；项目已有相同类型后端 | 可比较不同语言 CTC checkpoint，但语音模型不能视为现场歌唱专用模型。现允许原生算子缺失时走可移植 CTC，按能力而非版本号判断；[torchaudio 2.9 实际源码](https://github.com/pytorch/audio/blob/v2.9.0/src/torchaudio/functional/_alignment.py) 仍保留 API |
+
+最值得先试的是歌唱专用 HubertFA ONNX；“值得试”不等于已验证更好。现有 Whisper/稳定时间轴路线保留作基线，不因个别曲目得分切换默认。比较应固定素材、歌词与参数，并在未参与调参的演出上验证长音、重复副歌、间奏、轻声和多人交叠，同时报告漏句、时间误差、资源消耗及人工修正成本。
+
 ## 1. 当前定位
 
 本项目已经覆盖一条较完整的本地制作链路：演唱会长视频分曲及 MC/音乐边界复核 → 导出歌曲片段 → 人声处理、识别或提供歌词 → 多路径歌词对齐 → 自动验收与逐句证据检查 → 波形试听、人工锚点、插入漏句及版本重渲染 → 保留现场画面的卡拉 OK 视频和字幕文件。

@@ -94,6 +94,13 @@ td:last-child { min-width: 205px; }
 .exportbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
 .exportbar select { width: auto; flex: 1 1 280px; max-width: 450px; }
 .exportbar .primary { min-height: 44px; }
+.selectionbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 16px 0; }
+.selection-actions { display: flex; gap: 6px; }
+#selectionSummary { color: var(--lk-accent); font-size: 12px; font-variant-numeric: tabular-nums; }
+#saveState { margin-left: auto; }
+#saveState[data-dirty=true] { color: var(--lk-warm); border-color: #edbe7d55; }
+tbody tr[data-selected=false] { opacity: .65; }
+.exportbar { position: sticky; bottom: 12px; z-index: 2; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: var(--lk-panel-raised); box-shadow: var(--lk-shadow); }
 a { color: var(--lk-accent); font-size: 12px; text-underline-offset: 3px; }
 a:hover { color: var(--lk-accent-strong); }
 #modeHelp { margin-top: 12px; margin-bottom: 0; }

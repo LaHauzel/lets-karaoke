@@ -3,9 +3,8 @@
 设计要点
 --------
 1. **对齐源与输出音轨解耦**
-   P0 实测：伴奏会吃掉 13~26ms 的对齐精度。所以即便用户要保留原唱，
-   对齐也跑在分离出的干人声上；而输出音轨按用户选择取原音 / 伴奏 / 独立音轨。
-   两者互不影响。
+   是否使用分离人声由任务设置决定，改善程度需在当前输入上验证。
+   输出音轨按用户选择取原音 / 伴奏 / 独立音轨；已有逐词时间无需声学对齐。
 
 2. **单元到 token 的回映射**
    对齐模型的输出粒度不等于我们的 token 粒度：
@@ -945,11 +944,18 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
                    f"，歌词 {len(doc.lines)} 行，来源 {src_name}")
 
         # ---------------------------------------------------------- 1 音轨
+        use_word_times = doc.word_timed and cfg.timed_mode != 'ignore'
+        do_sep = cfg.separate and not cfg.audio_track and (not use_word_times or cfg.vocal_mode == 'remove')
         # 预对齐阶段（whisper / SOFA prepass）已抽过同一份 44.1k 立体声 → 直接复用，
         # 否则用旧路径 source_audio.wav 自抽一份（CLI 单独跑 pipeline 时就是这条路）。
         # 注意：用户给了独立音轨时不能复用，写入目标必须是 source_audio.wav，
         # 否则会把预对齐用的原始混音覆盖掉。
-        if cfg.audio_track:
+        if use_word_times and not do_sep:
+            # Keep a reference to the source for waveform/anchor editing. Decode
+            # it on demand there, rather than storing entire PCM copies now.
+            full_wav = Path(src_for_audio)
+            step(0.10, "逐词时间已完整，直接使用提供的音轨")
+        elif cfg.audio_track:
             full_wav = job_dir / "source_audio.wav"
             step(0.10, "抽取用户提供的独立音轨")
             extract_wav(cfg.audio_track, full_wav, sr=44100, mono=False, cancel=cancel)
@@ -967,8 +973,6 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         sep_src = str(full_wav)
         # A trusted word-timed LRC already supplies all alignment boundaries.
         # Separation only helps this path when the final audio removes vocals.
-        use_word_times = doc.word_timed and cfg.timed_mode != 'ignore'
-        do_sep = cfg.separate and not cfg.audio_track and (not use_word_times or cfg.vocal_mode == 'remove')
         # 预对齐阶段已经分离过一次（in/vg/）→ 复用它，别再跑一遍 demucs
         pre_voc, pre_acc = job_dir / "in" / "vg" / "vocals.wav", \
             job_dir / "in" / "vg" / "accompaniment.wav"
@@ -992,12 +996,20 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         else:
             align_src = sep_src
 
-        # 对齐用的 16k 单声道
-        align_16k = job_dir / "align_input.wav"
-        step(0.42, "准备 16kHz 单声道对齐输入")
-        extract_wav(align_src, align_16k, sr=SR, mono=True, cancel=cancel)
-        audio = load_audio_16k(align_16k, cancel=cancel)
-        audio_dur = len(audio) / SR
+        audio = None
+        if use_word_times:
+            audio_info = info if not do_sep and not cfg.audio_track else probe_media(align_src, cancel=cancel)
+            if not audio_info['has_audio']:
+                raise RuntimeError("提供的独立音轨没有可读取的音频")
+            audio_dur = float(audio_info['duration'])
+            if not math.isfinite(audio_dur) or audio_dur <= 0:
+                raise RuntimeError("音轨时长无效，无法使用已有逐词时间")
+        else:
+            align_16k = job_dir / "align_input.wav"
+            step(0.42, "准备 16kHz 单声道对齐输入")
+            extract_wav(align_src, align_16k, sr=SR, mono=True, cancel=cancel)
+            audio = load_audio_16k(align_16k, cancel=cancel)
+            audio_dur = len(audio) / SR
         step(0.45, f"对齐音频 {audio_dur:.2f}s（来自 {Path(align_src).name}）")
 
         # ---------------------------------------------------------- 2 分词
@@ -1197,6 +1209,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             "warp": warp_info,
             "health": health,
             "separated": do_sep,
+            "alignment_audio_decoded": not use_word_times,
             "output_audio": Path(out_audio).name if out_audio else "original",
             "encoder": used_enc,
             "media": info,
