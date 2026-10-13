@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import math
 
+DEFAULT_PROFILE = 'automatic'
+
 AUTO_OVERRIDES = {
     "reflow_gapped": False, "fix_over_long": False,
     "relocate_lowconf": False, "zeroconf_collapse": False,
@@ -58,7 +60,7 @@ def schema(defaults):
     return result
 
 
-def resolve_rules(defaults, overrides=None, profile="automatic"):
+def resolve_rules(defaults, overrides=None, profile=DEFAULT_PROFILE):
     if profile not in ("automatic", "balanced", "legacy"):
         raise ValueError("未知对齐模式")
     if overrides is not None and not isinstance(overrides, dict):

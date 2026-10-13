@@ -41,6 +41,53 @@ def _merge_owned_spans(spans, owners, tokens, ratio):
     return merged
 
 
+def _ctc_spans(log_probs, targets, blank=0):
+    """Viterbi CTC fallback when native alignment is absent, including repeats.
+
+    Keep only one score row and byte-sized backpointers. Frame coordinates use
+    an exclusive end, matching torchaudio's merge_tokens contract.
+    """
+    probabilities = np.asarray(log_probs)
+    labels = np.asarray(targets, dtype=np.int64)
+    if (probabilities.ndim != 2 or not probabilities.shape[1] or labels.ndim != 1 or
+            not 0 <= blank < probabilities.shape[1] or np.any(labels < 0) or
+            np.any(labels >= probabilities.shape[1]) or np.any(labels == blank) or
+            np.any(np.isnan(probabilities)) or np.any(np.isposinf(probabilities))):
+        raise ValueError('无效 CTC 概率或目标序列')
+    if not len(labels):
+        return []
+    frames = len(probabilities)
+    required = len(labels) + int(np.count_nonzero(labels[1:] == labels[:-1]))
+    if frames < required:
+        raise RuntimeError('音频帧数不足以对齐全部字词及重复音素')
+    states = np.full(2 * len(labels) + 1, blank, dtype=np.int64)
+    states[1::2] = labels
+    skip = np.zeros(len(states), dtype=bool)
+    skip[3::2] = labels[1:] != labels[:-1]
+    scores = np.full(len(states), -np.inf)
+    scores[:2] = probabilities[0, states[:2]]
+    back = np.zeros((frames, len(states)), dtype=np.uint8)
+    for frame in range(1, frames):
+        advance = np.r_[-np.inf, scores[:-1]]
+        jump = np.r_[-np.inf, -np.inf, scores[:-2]]
+        jump[~skip] = -np.inf
+        choices = np.vstack((scores, advance, jump))
+        back[frame] = choices.argmax(axis=0)
+        scores = choices.max(axis=0) + probabilities[frame, states]
+    state = len(states) - 1 if scores[-1] > scores[-2] else len(states) - 2
+    if not np.isfinite(scores[state]):
+        raise RuntimeError('CTC 无法找到覆盖全部字词的有效对齐路径')
+    path = np.empty(frames, dtype=np.int64)
+    for frame in range(frames - 1, -1, -1):
+        path[frame] = state
+        state -= int(back[frame, state])
+    spans = []
+    for index in range(len(labels)):
+        occupied = np.flatnonzero(path == 2 * index + 1)
+        spans.append(TokenSpan('', int(occupied[0]), int(occupied[-1]) + 1))
+    return spans
+
+
 class Wav2Vec2Aligner:
     """语言相关 wav2vec2 CTC 模型 + torchaudio.functional.forced_align。
 
@@ -114,8 +161,6 @@ class Wav2Vec2Aligner:
     # -- 对齐 -------------------------------------------------------------
     def align(self, audio: np.ndarray, tokens: list[str], lang: str = "") -> list[TokenSpan]:
         import torch
-        import torchaudio
-        from torchaudio.functional import forced_align, merge_tokens
 
         ids, owner = self.encode(tokens)
         if not ids:
@@ -127,9 +172,16 @@ class Wav2Vec2Aligner:
             logits = self.model(wav_t).logits
         log_probs = torch.log_softmax(logits.float(), dim=-1)
 
-        targets = torch.tensor([ids], dtype=torch.int32, device=self.device)
-        aligned, scores = forced_align(log_probs, targets, blank=self.blank)
-        spans = merge_tokens(aligned[0].to("cpu"), scores[0].to("cpu"))
+        try:
+            from torchaudio.functional import forced_align, merge_tokens
+        except (ImportError, OSError):
+            forced_align = merge_tokens = None
+        if forced_align is None or not hasattr(torch.ops.torchaudio, 'forced_align'):
+            spans = _ctc_spans(log_probs[0].to('cpu').numpy(), ids, self.blank)
+        else:
+            targets = torch.tensor([ids], dtype=torch.int32, device=self.device)
+            aligned, scores = forced_align(log_probs, targets, blank=self.blank)
+            spans = merge_tokens(aligned[0].to("cpu"), scores[0].to("cpu"))
 
         if len(spans) != len(ids):
             raise RuntimeError(f"forced_align span/unit mismatch: {len(spans)} vs {len(ids)}")

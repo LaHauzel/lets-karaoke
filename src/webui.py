@@ -60,7 +60,7 @@ WORKER_LOCK = threading.Lock()
 WORKER = None
 STOP_WORKER = threading.Event()
 
-from alignment_policy import resolve_rules, schema
+from alignment_policy import DEFAULT_PROFILE, resolve_rules, schema
 from whisper_align import DEFAULT_RULES, postprocess_lines
 
 import model_paths  # noqa: E402,F401  （模型统一在项目 models\ 下，须早于模型加载）
@@ -566,7 +566,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             if cancel():
                 raise RuntimeError("cancelled")
             cfg_kwargs["lyrics_text"] = (job.dir / "asr_lyrics.plain.txt").read_text(encoding="utf-8")
-            cfg_kwargs.setdefault("alignment_profile", "balanced")
+            cfg_kwargs.setdefault("alignment_profile", DEFAULT_PROFILE)
             cfg_kwargs.setdefault("align_dual", True)
             cfg_kwargs.setdefault("align_on_vocals", True)
             cfg_kwargs.setdefault("vocal_guide", True)
@@ -627,11 +627,11 @@ def _vc_thr(rules: dict | None) -> float:
 
 
 def _vc_rel(rules: dict | None) -> float:
-    """相对能量剔除阈值（dB）——规则可覆盖，默认 6.0；设 0 关闭。"""
+    """相对能量剔除默认关闭；只有显式参数才启用。"""
     try:
-        return float((rules or {}).get("rel_drop_db", 6.0))
+        return float((rules or {}).get("rel_drop_db", 0.0))
     except (TypeError, ValueError):
-        return 6.0
+        return 0.0
 
 
 def _audio44(job: Job, cfg_kwargs: dict, tag: str = "align",
@@ -809,7 +809,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     import textgrid as tg
     rep = {"refined": 0, "failed": [], "fallback": [],
            "rules": resolve_rules(DEFAULT_RULES, cfg_kwargs.get("rules"),
-                                  cfg_kwargs.get("alignment_profile", "balanced"))}
+                                  cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE))}
     conf_csv = seg_dir / "confidence" / "ja_job_dict.csv"
     conf = {}
     if conf_csv.exists():
@@ -901,7 +901,7 @@ def _sofa_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
                 max_seg_s=float((rep.get("rules") or {}).get("tx_max_seg", 8.0)),
                 cap_frac=float((rep.get("rules") or {}).get("tx_cap_frac", 0.10)))
         postprocess_lines(asr_lines, iv2, cfg_kwargs.get("rules"),
-                          cfg_kwargs.get("alignment_profile", "balanced"))
+                          cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE))
     except Exception:  # noqa: BLE001
         pass
 
@@ -947,7 +947,7 @@ def _whisper_prepass(job: Job, cfg_kwargs: dict, cancel) -> None:
     use_vg = bool(cfg_kwargs.get("vocal_guide", True))
     use_align_vocals = bool(cfg_kwargs.get("align_on_vocals", True))
     use_dual = bool(cfg_kwargs.get("align_dual", True))
-    profile = cfg_kwargs.get("alignment_profile", "balanced")
+    profile = cfg_kwargs.get("alignment_profile", DEFAULT_PROFILE)
     user_rules = resolve_rules(DEFAULT_RULES, cfg_kwargs.get("rules"), profile)
 
     # 取歌词文本（文本框或文件）
@@ -1326,6 +1326,7 @@ class Handler(BaseHTTPRequestHandler):
                     "rule_schema": schema(DEFAULT_RULES),
                     "rule_profiles": {p: resolve_rules(DEFAULT_RULES, profile=p)
                                       for p in ("balanced", "automatic", "legacy")},
+                    "rule_default_profile": DEFAULT_PROFILE,
                     "capabilities": capabilities(),
                 })
             if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js',
@@ -1593,7 +1594,7 @@ class Handler(BaseHTTPRequestHandler):
                                     not in (None, "", "0", "false", "False"))
         # Both alignment routes share the same validated defaults and overrides.
         if kwargs["whisper_align"] or kwargs["sofa_align"] or asr_mode:
-            kwargs["alignment_profile"] = fields.get("alignment_profile") or "balanced"
+            kwargs["alignment_profile"] = fields.get("alignment_profile") or DEFAULT_PROFILE
             try:
                 raw_rules = json.loads(fields.get("rules") or "{}")
                 kwargs["rules"] = resolve_rules(DEFAULT_RULES, raw_rules,
@@ -1701,17 +1702,23 @@ class Handler(BaseHTTPRequestHandler):
             # Reserve while holding LOCK, so deletion and async submissions
             # cannot slip between validation and the actual synchronous edit.
             SYNC_EDITS.add(directory)
+        response_status = 200
         try:
             # Queue workers acquire RESOURCE_LOCK before LOCK; keep that order.
             if not RESOURCE_LOCK.acquire(blocking=False):
-                return self._json({'error':'处理队列正在使用模型，请使用异步调整'},409)
-            try:
-                return self._json(perform_edit(data))
-            finally:
-                RESOURCE_LOCK.release()
+                response = {'error':'处理队列正在使用模型，请使用异步调整'}
+                response_status = 409
+            else:
+                try:
+                    response = perform_edit(data)
+                finally:
+                    RESOURCE_LOCK.release()
         finally:
             with LOCK:
                 SYNC_EDITS.discard(directory)
+        # Release reservations before publishing the response, so a client
+        # that has received completion can immediately submit another action.
+        return self._json(response, response_status)
 
     def _file(self, rel: str):
         parts = [urllib.parse.unquote(x) for x in rel.split("/") if x]

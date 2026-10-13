@@ -85,6 +85,11 @@
       <div class="card-kicker"><span class="step" aria-hidden="true">04</span>调整与交付</div>
       <div class="heading"><h2>分段时间表 <span id="count"></span></h2><button id="save">保存调整</button></div>
       <p class="notice" id="notice">自动分段是待复核草稿。确认名称和时间，取消不需要的片段，或合并误切的相邻片段。</p>
+      <div class="selectionbar" aria-label="片段选择与保存状态">
+        <div class="selection-actions"><button id="selectAll" class="small">全选</button><button id="selectNone" class="small">取消全选</button><button id="invertSelection" class="small">反选</button></div>
+        <output id="selectionSummary" aria-live="polite">尚无片段</output>
+        <span id="saveState" class="tag" role="status">尚未载入</span>
+      </div>
       <div id="reviewNotes" class="hint"></div>
       <details id="speechReview" class="speechReview" hidden>
         <summary id="speechSummary">疑似讲话区间</summary>

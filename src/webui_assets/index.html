@@ -253,7 +253,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </div>
       <div class="hint" id="srcHint" style="margin:-2px 0 9px"></div>
       <div class="hint" id="sourceAvailability" role="status">正在检查本机功能…</div>
-      <details class="settings-details"><summary>对齐设置 <span>默认参数适用于大多数任务</span></summary>
+      <details class="settings-details" id="alignmentSettings"><summary>对齐设置 <span>默认参数适用于大多数任务</span></summary>
       <div id="whisperOpts"
            style="font-size:12.5px;color:var(--tx2);margin:-2px 0 9px;display:flex;gap:16px;flex-wrap:wrap;align-items:center">
         <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
@@ -276,8 +276,8 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </div>
       <label>对齐策略
         <select id="alignmentProfile">
-          <option value="balanced">自动均衡（当前测试推荐 · 保留长音，最后检查尾界）</option>
-          <option value="automatic">轻量修正（实验 · 仅有限修正边界）</option>
+          <option value="automatic">保留声学锚点（默认 · 仅在附近微调）</option>
+          <option value="balanced">启发式均衡（实验 · 可能重排行句）</option>
           <option value="legacy">旧规则（对照 · 允许整行重排和搬移）</option>
         </select>
       </label>
@@ -296,7 +296,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       <div id="ruleHelp" class="rule-help hidden" role="dialog" aria-label="高级参数说明">
         <button type="button" class="help-close" id="closeRuleHelp" aria-label="关闭说明">×</button>
         <h3>高级参数说明 <span>通常保持默认</span></h3>
-        <p class="help-note">这些参数是在“模型时间轴”之后做的有限修正。先听成片，再只调整最相关的一两项。</p>
+        <p class="help-note">默认保留模型声学锚点。均衡与旧策略含重排、搬移等启发式，可能改变真实长音与间奏位置；启用后请试听复核。</p>
         <h4>边界与时间轴</h4>
         <dl>
           <dt>boundary_limit · 自动边界最大调整</dt><dd>限制起点或尾点吸附的最大距离。调大可能修复偏移，但更容易吸附到相邻声音。</dd>
@@ -506,6 +506,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
     <div class="card generation-card" id="generationCard">
       <h2><span class="n">3</span>生成与复核 <span class="card-caption">处理将在后台队列继续</span></h2>
       <div id="inputReadiness" class="input-readiness" aria-live="polite"><span>○ 尚未选择媒体</span><span>○ 准备歌词</span></div>
+      <p id="processingPlan" class="hint" aria-live="polite">选择歌词处理方式后，会在这里显示本次处理流程。</p>
       <button class="primary" id="btnRun" disabled>开始生成卡拉OK</button>
       <div class="barwrap" style="margin-top:12px">
         <div class="lbl"><span id="stageTxt">待开始</span><span id="pctTxt">0%</span></div>
@@ -670,6 +671,7 @@ async function boot(){
   ANCHOR_API_SUPPORTED=meta.features?.multi_anchor===true;
   ASYNC_EDIT_SUPPORTED=meta.features?.async_edit===true;
   window.RULE_META = meta;
+  $('#alignmentProfile').value=meta.rule_default_profile||'automatic';
   applyCapabilities(meta.capabilities);
   renderRules();
   const fs = $('#font');
@@ -721,6 +723,9 @@ function refreshRunAvailability(){
   const source=TaskClient.generationState(CAPABILITIES,SRC,false,needsSeparation);
   $('#sourceAvailability').textContent=source.reason;
   $('#sourceAvailability').classList.toggle('hidden',source.allowed);
+  const route={whisper:'已有歌词对齐',sofa:'逐行定位 → 日语歌声细化',asr:'转写草稿 → 字幕生成',timed:'已有逐词时间 → 直接出片'}[SRC]||'';
+  const sound=$('#track').files[0]?'使用独立音轨':VOCAL==='keep'?'保留原唱':$('#separate').checked?'分离人声并使用伴奏':'保留原唱（未启用分离）';
+  $('#processingPlan').textContent=`${route} · ${sound}`;
   globalThis.LYRICS_SEARCH?.refreshAvailability?.();
   globalThis.updateInputSummary?.();
 }
@@ -796,6 +801,7 @@ function refreshSrcUI(){
   }
   $('#segLang').querySelectorAll('button').forEach(button=>button.disabled=SRC==='sofa'&&button.dataset.v!=='ja');
   $('#srcHint').textContent = SRC_HINT[SRC] || '';
+  $('#alignmentSettings').hidden=SRC==='timed';
   $('#timedMode').disabled=SRC==='timed';
   if(SRC==='timed')$('#timedMode').value='warp';
   const hasLyrics = $('#lyrics').value.trim() || $('#lyricsFile').files[0] || MEDIA_ITEMS[MEDIA_ACTIVE_INDEX]?.lyricsFile;

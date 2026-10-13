@@ -17,12 +17,10 @@
 
 后处理（按策略选择，可能需要人工复核）
 ------------------
-1. **行内断档重排**：whisper 偶尔把个别词甩过器乐段（同句的词一个在 solo 前、
-   一个在 solo 后）。句内词间隔 > ``GAP_MAX`` 秒几乎必然是错锚 —— 整句按
-   「全局中位字速」从首词起点连续重排。不要用能量阈值判：现场人声 stem
-   混着观众噪声，能量法失真。
-2. **前向扫描**：保证行不重叠且每行有最短时长，否则结尾密集的 hook 段
-   会出现 0.04s 的闪现行。
+1. 默认保留声学锚点，仅在附近有证据时微调边界。长音、停顿与低音量
+   本身不能证明歌词错位或缺失；不按固定字速整行重排、搬移或删除歌词。
+2. 结构投影满足字幕时间顺序与格式精度；较大的投影调整仍标记为待复核。
+   历史启发式保留在显式选择的 balanced/legacy 策略中，用于比较旧结果。
 3. **空格保留**：char 粒度下把空格挂到前一个字符的显示文本上，
    否则英文行渲染成 ``Ihearadoor``（配合 asr_lyrics.to_enhanced_lrc 的不 strip 修复）。
 """
@@ -44,6 +42,7 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from asr_lyrics import AsrLine, Segment, to_enhanced_lrc, to_plain, to_srt  # noqa: E402
 import model_paths  # noqa: E402,F401  （whisper 权重指向 models\whisper\）
+from alignment_policy import DEFAULT_PROFILE, resolve_rules
 
 GAP_MAX = 3.0        # 句内词间隔超过这个秒数视为错锚
 MAX_W_DUR = 1.5      # 单词合理时长上限（用于筛「健康词」估字速）
@@ -57,7 +56,7 @@ PROB_OK = 0.60           # 行平均词概率高于此 → 起点可信（只修
 SUSPECT_PROB = 0.60      # 低于此的行进诊断，提示人工复核
 MAX_TAIL_GAIN = 12.0     # 拖音补偿的行尾最大延长（秒）
 
-# —— 启发式规则开关（WebUI「高级选项」透传到这里）——
+# Historical rule schema; resolve_rules applies the conservative default profile.
 DEFAULT_RULES = {
     "boundary_limit": 0.6,   # 自动模式：只在此距离内微调首尾声学边界
     "reflow_gapped": True,   # 句内断档重排（句尾甩远 → 锚回起点）
@@ -92,16 +91,11 @@ DEFAULT_RULES = {
 
 
 def _norm_rules(rules: dict | None) -> dict:
-    """合并用户规则与默认值；未知键忽略。"""
-    r = dict(DEFAULT_RULES)
-    if rules:
-        for k, v in rules.items():
-            if k in r:
-                r[k] = v
-    return r
+    """Use the shared default policy; explicit legacy settings remain supported."""
+    return resolve_rules(DEFAULT_RULES, rules, DEFAULT_PROFILE)
 
 
-def postprocess_lines(lines, intervals, rules=None, profile="automatic"):
+def postprocess_lines(lines, intervals, rules=None, profile=DEFAULT_PROFILE):
     """唯一后处理入口，供网页、命令行和回归评估共用。"""
     from alignment_policy import bounded_refine, resolve_rules
     r = resolve_rules(DEFAULT_RULES, rules, profile)
@@ -296,8 +290,7 @@ def fix_over_long(grp: list[list], rate: float) -> str | None:
 
     锚定侧用**行平均词概率**决定（whisper 给的、Qwen 对齐器没有的信号）：
       * 平均概率 >= PROB_OK：起点是真的，只是尾巴拖进器乐段 → 锚**起点**；
-      * 平均概率 <  PROB_OK：整句都是错的 → 锚**行尾**（跟着下一句走，
-        实测能复现人工校对的位置，如 "a lyric line" → 282.6s）。
+      * 平均概率 < PROB_OK：旧策略锚到行尾；低分本身不证明位置错误，需复核。
     返回 'start' / 'end' / None（未触发）。
     """
     chars = sum(len(_nsp(w[0])) for w in grp)
@@ -378,18 +371,15 @@ def enforce_timing(lines: list[AsrLine], min_dur: float = MIN_LINE_DUR,
 
 def vocal_intervals(voc_path: str | Path, thr_factor: float = 0.12,
                     min_gap_s: float = 0.6, min_len_s: float = 0.8,
-                    rel_drop_db: float = 6.0,
+                    rel_drop_db: float = 0.0,
                     short_s: float = 4.0) -> list[tuple[float, float]]:
     """从分离出的人声 stem 算「有人在唱」的区间（秒）。
 
     阈值用峰值的比例而不是中位数：现场人声 stem 混着观众噪声，
     中位数会被抬高导致漏检。min_gap_s 内的静音并入、短于 min_len_s 的活跃视为噪声。
 
-    **相对能量剔除（``rel_drop_db`` / ``short_s``，recent validation 新增）**：峰值比例阈值
-    351.4–353.7s 是观众在吼，但它在干声里仍有 -28.5dB（阈值 -35dB），被当成"有人在唱"
-    判据：**段内中位电平比全曲活跃帧中位电平低 ``rel_drop_db`` 以上、且段长 < ``short_s``**
-    → 剔除。实测该段 -7.2dB / 2.3s，真唱段全在 ±1.2dB 内；加"短"这一条是为了
-    不误伤「安静的段落」（整段偏轻但很长，那是真唱）。
+    相对能量剔除默认关闭。显式设置 ``rel_drop_db`` 后才按相对电平和
+    ``short_s`` 过滤短弱段；轻声唱段也可能被误伤，不能据此推断歌词缺失。
     """
     import numpy as np
     import soundfile as sf
@@ -670,7 +660,7 @@ def relocate_lowconf(lines: list[AsrLine], intervals: list[tuple[float, float]],
                      rules: dict | None = None) -> dict:
     """低置信行重定位：整句被 whisper「猜」到错误位置的行，搬进未认领的人声区间。
 
-    判据（recent validation 双案例实测设计）：
+    历史可选启发式（默认关闭）：
     - 行平均词概率 ≥ conf_high → 高置信，位置可信，并认领其所在人声区间的
       「行尾之后部分」（拖音归属，供 extend_tails 使用）；
     - < conf_low → 低置信。此时看行内有无「证据词」（p≥ev_prob 且时长≥ev_dur）：
@@ -678,8 +668,7 @@ def relocate_lowconf(lines: list[AsrLine], intervals: list[tuple[float, float]],
       * 无证据词 → 整句是猜的：在「前一行末尾 ~ 后续锚点」窗口内，把行放进
         步进式第一个装得下的未认领区间；都装不下则压缩进窗口内最后一个槽位。
 
-    `sample line`@240.08（全词 p≤0.01，压在上一句拖音里）→ 246.8 槽位；
-    `a lyric line`（尾词 'on' p=0.79/1.14s）→ 锚定到 ≈283.2-288.2
+    低置信分数和未认领区间不能单独证明真实演唱位置，此策略需显式启用并复核。
     """
     R = _norm_rules(rules)
     rep: dict = {"relocated": [], "evidence_anchored": [], "no_slot": []}
@@ -743,8 +732,7 @@ def relocate_lowconf(lines: list[AsrLine], intervals: list[tuple[float, float]],
 
         if _has_evidence(ln, R):
             # 有证据词：先看位置是否合理（落在人声活跃区间内且行时长不超标）
-            # —— 合理则保留（实测 L20/L24："sample repeated lyric line"@87.7/
-            # "sample line"@100.2 本来就唱对了，乱锚反而变差）；
+            # Preserve positions supported by the local activity evidence.
             # 仅当行时长严重超标（whisper 把词摊进间奏）才锚定到证据词尾。
             reasonable = (_active_at(intervals, ln.start)
                           and ln.duration <= rate * _vis_len(ln) * 1.8)
@@ -1075,7 +1063,7 @@ def main() -> int:
     ap.add_argument("--out", required=True, help="增强 LRC 输出路径（同时产出 .plain.txt / .srt / .json）")
     ap.add_argument("--vocals", help="分离人声 stem（wav）；给了就启用人声能量引导，"
                                      "把「人声什么时候在唱」当硬约束")
-    ap.add_argument("--profile", choices=["balanced", "automatic", "legacy"], default="balanced")
+    ap.add_argument("--profile", choices=["automatic", "balanced", "legacy"], default=DEFAULT_PROFILE)
     ap.add_argument("--rules", help="规则 JSON（键见 DEFAULT_RULES，如 "
                                     "'{\"tail_extend\": false, \"gap_max\": 2.5}'）")
     args = ap.parse_args()
@@ -1122,7 +1110,7 @@ def main() -> int:
         try:
             iv = vocal_intervals(args.vocals,
                                  thr_factor=float((user_rules or {}).get("vocal_thr", 0.12)),
-                                 rel_drop_db=float((user_rules or {}).get("rel_drop_db", 6.0)))
+                                 rel_drop_db=float((user_rules or {}).get("rel_drop_db", 0.0)))
             if (user_rules or {}).get("tx_crosscheck", True):
                 tx = transcribe_check(args.vocals, lines, language=args.lang,
                                       device=args.device, model_size=args.model,
