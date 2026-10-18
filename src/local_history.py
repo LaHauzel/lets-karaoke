@@ -34,15 +34,19 @@ def describe(directory, root):
             continue
         version = 0 if path.name == 'align.json' else int(path.stem[7:])
         suffix = f'_v{version}' if version else ''
-        videos = sorted(directory.glob(f'*_karaoke{suffix}.mp4'))
+        details = json.loads(path.read_text(encoding='utf-8'))
+        extension = '.mkv' if details.get('output_mode') == 'soft' else '.mp4'
+        videos = sorted(directory.glob(f'*_karaoke{suffix}{extension}'))
+        if not videos:
+            videos = sorted(directory.glob(f'*_karaoke{suffix}.mkv'))
         if not videos and not version and (directory/'karaoke.mp4').exists():
             videos = [directory/'karaoke.mp4']
-        details = json.loads(path.read_text(encoding='utf-8'))
         versions.append({'version': version, 'video': videos[0].name if videos else None,
                          'operation': details.get('operation'), 'anchor_row': details.get('anchor_row'),
                          'anchor_rows': details.get('anchor_rows') or ([details['anchor_row']] if details.get('anchor_row') is not None else []),
                          'base_version': details.get('base_version', 0),
                          'align': path.name, 'ass': f'karaoke{suffix}.ass',
+                         'output_mode': details.get('output_mode', 'soft' if videos and videos[0].suffix == '.mkv' else 'burn'),
                          'srt': f'lyrics{suffix}.srt', 'created': path.stat().st_mtime})
     versions.sort(key=lambda v: v['version'])
     metadata = {}
@@ -65,6 +69,7 @@ def describe(directory, root):
         stats = {**saved.get('stats', {}), 'lines': len(details.get('lines', [])),
                  'tokens': sum(len(l.get('tokens', [])) for l in details.get('lines', [])),
                  'health': details.get('health', {}), 'lang': details.get('lang', metadata.get('lang'))}
+        stats['output_mode'] = latest['output_mode']
         result = {**saved, **latest, 'stats': stats}
         for kind in ('asr', 'whisper', 'sofa'):
             result[kind+'_files'] = sorted(p.name for p in directory.glob(kind+'_*') if p.is_file())
@@ -76,7 +81,8 @@ def describe(directory, root):
     state = status.get('state', 'incomplete')
     if latest and state not in {'queued', 'running', 'interrupted'}:
         state = 'done'
-    return {'job': identify(directory, root), 'title': Path(metadata.get('media') or directory.name).name,
+    return {'job': identify(directory, root), 'title': metadata.get('display_title') or Path(metadata.get('media') or directory.name).name,
+            'review_origin': metadata.get('review_origin', {}),
             'path': directory.relative_to(root).as_posix(), 'versions': versions,
             'editable': bool(metadata and (directory/'align.json').exists()),
             'created': max((v['created'] for v in versions), default=directory.stat().st_mtime),
@@ -99,6 +105,11 @@ def scan(root):
     directories = set()
     excluded = {'.tasks', '.uploads', 'alignment-repair-audit', 'evaluation', 'concert'}
     for base, folders, names in os.walk(root, followlinks=False):
+        # Backup metadata and standalone delivery libraries have their own
+        # catalog; they must not become editable generation-history jobs.
+        if '.history-ignore' in names:
+            folders[:] = []
+            continue
         folders[:] = [f for f in folders if f not in excluded and not f.startswith('project_audit_')]
         if set(names) & {'job.json', 'align.json', 'history_status.json', 'task_request.json'}:
             directories.add(Path(base))

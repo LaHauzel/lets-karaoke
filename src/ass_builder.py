@@ -106,6 +106,9 @@ class AssOptions:
     group_same_unit: bool = False    # 把落在同一对齐单元内的连续 token 合成一次扫描
                                      # （日文推荐：nagisa 常把「渡って」并成一个单元，
                                      #   单元内逐字定位精度有限，整单元高亮更稳）
+    gap_hint: bool = True
+    gap_hint_min_s: float = 3.0
+    gap_hint_step_s: float = 0.6
 
 
 # --------------------------------------------------------------------------
@@ -250,9 +253,8 @@ def _karaoke_body(ln: KaraokeLine, opt: AssOptions, ev_start: float,
                   play_res_x: int, font_size: int) -> str:
     """生成一行卡拉OK正文：{\\k 预亮}{\\kf d0}甲{\\kf d1}乙...
 
-    时长 = 相邻扫描段「起点之差」（末段取到行尾），因此：
-      - 整行扫描连续无空洞，不会出现高亮卡顿；
-      - 标点被并入前一段的扫描区间，观感自然。
+    每段只扫描到其声学结束点。段间停顿用无正文的计时标签等待，
+    避免把上一字的高亮拉长到下一字开唱。
     累积时刻用整数厘秒累加器换算，避免逐段四舍五入造成漂移。
     """
     toks = ln.tokens
@@ -284,11 +286,12 @@ def _karaoke_body(ln: KaraokeLine, opt: AssOptions, ev_start: float,
         parts.append(esc_text(ln.head))
 
     segs = _segments(ln, opt.group_same_unit)
-    acc = head_pre
     for i, seg in enumerate(segs):
-        nxt = segs[i + 1][0].start if i + 1 < len(segs) else ln.end
-        acc += max(0.0, nxt - seg[0].start)
-        total = cs(acc)                    # 自事件起点起的累积厘秒
+        start_tick = max(0, round((seg[0].start - ev_start) * 100))
+        if start_tick > emitted:
+            parts.append(r"{\k%d}" % (start_tick - emitted))
+            emitted = start_tick
+        total = cs(max(t.end for t in seg) - ev_start)
         if total <= emitted:
             total = emitted + 1
         d = total - emitted
@@ -297,6 +300,48 @@ def _karaoke_body(ln: KaraokeLine, opt: AssOptions, ev_start: float,
         parts.append("".join(esc_text(t.disp if t.disp else t.text) for t in seg))
 
     return "".join(parts)
+
+
+def display_chunks(lines: list[KaraokeLine], opt: AssOptions) -> list[KaraokeLine]:
+    """Split display at long acoustic pauses without changing alignment data."""
+    if not opt.gap_hint:
+        return lines
+    result = []
+    threshold = max(0.5, float(opt.gap_hint_min_s))
+    for line in lines:
+        groups = []
+        for token in line.tokens:
+            if not groups or token.start - groups[-1][-1].end >= threshold:
+                groups.append([])
+            groups[-1].append(token)
+        for index, tokens in enumerate(groups):
+            if len(groups) == 1:
+                result.append(line)
+                continue
+            result.append(KaraokeLine(
+                raw=''.join(t.disp or t.text for t in tokens), tokens=tokens,
+                head=line.head if index == 0 else '',
+                start=tokens[0].start, end=tokens[-1].end,
+            ))
+    solve_windows(result, opt)
+    return result
+
+
+def gap_hints(lines: list[KaraokeLine], opt: AssOptions):
+    """Yield repeating one/two/three-dot events only between sung phrases."""
+    if not opt.gap_hint:
+        return
+    previous_end = 0.0
+    step = max(0.1, float(opt.gap_hint_step_s))
+    for line in lines:
+        end = line.ev_start
+        if end - previous_end >= max(0.5, float(opt.gap_hint_min_s)):
+            cursor, phase = previous_end, 0
+            while cursor < end - .005:
+                stop = min(end, cursor + step)
+                yield cursor, stop, ' '.join('.' for _ in range(phase % 3 + 1))
+                cursor, phase = stop, phase + 1
+        previous_end = max(previous_end, line.ev_end)
 
 
 def _fmt_time(sec: float) -> str:
@@ -310,6 +355,7 @@ def _fmt_time(sec: float) -> str:
 def build_ass(lines: list[KaraokeLine], opt: AssOptions,
               width: int = 1920, height: int = 1080) -> str:
     """编译完整的 ASS 文件内容。"""
+    lines = display_chunks(lines, opt)
     scale = height / BASE_HEIGHT
     fs = max(14, int(opt.font_size * scale))
     mv = int(opt.margin_v * scale)
@@ -360,6 +406,8 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
         f"Style: NEXT,{opt.font},{next_fs},{dim},{dim},{ol},&H00000000,"
         f"{bold},0,0,0,100,100,0,0,1,{max(0.0, outline - 1 * scale):.1f},"
         f"{shadow:.1f},2,{mh},{mh},{next_mv},1",
+        f"Style: GAP,{opt.font},{round(fs * 1.6)},{unsung},{unsung},{ol},&H00000000,"
+        f"{bold},0,0,0,100,100,0,0,1,{outline:.1f},{shadow:.1f},2,{mh},{mh},{mv},1",
         "",
         "[Events]",
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, "
@@ -368,6 +416,11 @@ def build_ass(lines: list[KaraokeLine], opt: AssOptions,
 
     n = len(lines)
     events: list[str] = []
+    for begin, end, dots in gap_hints(lines, opt):
+        events.append(
+            f"Dialogue: 0,{_fmt_time(begin)},{_fmt_time(end)},"
+            f"GAP,,0,0,0,,{{\\an2\\pos({positions[0][0]},{positions[0][1]})}}{dots}"
+        )
     for i, ln in enumerate(lines):
         if not ln.tokens:
             continue

@@ -700,11 +700,18 @@ def _enc_args(encoder: str, quality: int) -> list[str]:
             "-cq", str(quality), "-b:v", "0", "-g", "120"] + common
 
 
+def normalize_output_mode(value: str) -> str:
+    if value not in ('burn', 'soft'):
+        raise ValueError(f'未知字幕输出方式: {value}')
+    return value
+
+
 def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path,
                  audio_track: str | None, media_info: dict,
                  encoder: str = "auto", quality: int = 21,
-                 audio_copy_ok: bool = False, cancel: CancelFn | None = None) -> str:
-    """把 ASS 烧进画面。cwd 设在字幕所在目录，避免 Windows 盘符冒号在
+                 audio_copy_ok: bool = False, cancel: CancelFn | None = None,
+                 output_mode: str = 'burn') -> str:
+    """烧录 MP4，或内封 ASS 的 MKV。cwd 设在字幕所在目录，避免 Windows 盘符冒号在
     filtergraph 里的转义地狱（ass=xxx：':' 和 '\\' 都要转义）。
 
     注意：正因为 cwd 被切到 ``ass_dir``，除 ``ass_name`` 之外的所有路径都
@@ -712,10 +719,13 @@ def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path
     相对的）会被 ffmpeg 解析成 ``ass_dir/out/...``，报 "No such file or directory"。
     """
     encoder = normalize_encoder(encoder)
+    output_mode = normalize_output_mode(output_mode)
     media = str(Path(media).resolve())
     if audio_track:
         audio_track = str(Path(audio_track).resolve())
     out_path = Path(out_path).resolve()
+    if output_mode == 'soft' and out_path.suffix.lower() != '.mkv':
+        raise ValueError('内封 ASS 字幕轨需要使用 .mkv 输出文件')
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(prefix=f'.{out_path.stem}_', suffix=out_path.suffix,
                                      dir=out_path.parent, delete=False) as pending:
@@ -736,22 +746,37 @@ def render_video(media: str | Path, ass_name: str, ass_dir: Path, out_path: Path
             c += ["-i", str(media)]
         if audio_track:
             c += ["-i", str(audio_track)]
-        c += ["-vf", vf]
+        if output_mode == 'soft':
+            c += ['-i', str((Path(ass_dir) / ass_name).resolve())]
+        else:
+            c += ["-vf", vf]
         if media_info.get("has_video"):
             c += ["-map", "0:v:0"]
             c += ["-map", ("1:a:0" if audio_track else "0:a:0")]
         else:
             c += ["-map", "0:v:0", "-map", ("2:a:0" if audio_track else "1:a:0")]
-        c += ["-shortest"]
-        c += _enc_args(e, quality)
+        # The final subtitle can end before the music. Do not truncate a
+        # soft-subtitle output to that packet with -shortest.
+        if output_mode == 'soft':
+            subtitle_index = (1 if media_info.get('has_video') else 2) + bool(audio_track)
+            c += ['-map', f'{subtitle_index}:0', '-c:s', 'ass',
+                  '-disposition:s:0', 'default', '-metadata:s:s:0', 'title=卡拉OK ASS']
+            if not media_info.get('has_video'):
+                c += ['-t', str(media_info['duration'])]
+        else:
+            c += ["-shortest"]
+        c += ['-c:v', 'copy'] if e == 'copy' else _enc_args(e, quality)
         if audio_copy_ok and not audio_track:
             c += ["-c:a", "copy"]
         else:
             c += ["-c:a", "aac", "-b:a", "256k"]
-        c += ["-movflags", "+faststart", str(temporary)]
+        if output_mode == 'burn':
+            c += ["-movflags", "+faststart"]
+        c += [str(temporary)]
         return c
 
-    tries = [enc] + ([("x264" if enc != "x264" else "nvenc")] if encoder == "auto" else [])
+    tries = (['copy'] if output_mode == 'soft' and media_info.get('has_video') else
+             [enc] + ([("x264" if enc != "x264" else "nvenc")] if encoder == "auto" else []))
     last = ""
     for e in tries:
         cmd = base(e)
@@ -851,6 +876,7 @@ class PipelineConfig:
     encoder: str = "auto"                # auto | nvenc | x264
     quality: int = 21
     ass: AssOptions = field(default_factory=AssOptions)
+    output_mode: str = 'burn'            # burn: 硬字幕 MP4 | soft: 内封 ASS MKV
 
 
 @dataclass
@@ -906,6 +932,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
 
     try:
         # ---------------------------------------------------------- 0 准备
+        cfg.output_mode = normalize_output_mode(cfg.output_mode)
         if not cfg.media or not Path(cfg.media).exists():
             raise RuntimeError(f"媒体文件不存在: {cfg.media}")
         job = cfg.job_name or f"{Path(cfg.media).stem}_{time.strftime('%m%d_%H%M%S')}"
@@ -1122,7 +1149,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
 
         aj = job_dir / "align.json"
         aj.write_text(json.dumps({
-            "job": job, "media": cfg.media, "lang": lang,
+            "job": job, "media": cfg.media, "lang": lang, "output_mode": cfg.output_mode,
             "align_source": Path(align_src).name,
             "audio_duration": round(audio_dur, 4),
             "mapping": diag, "warp": warp_info, "health": health,
@@ -1176,7 +1203,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             "align_source": str(Path(align_src).resolve()),
             "lang": lang,
             "device": cfg.device,
-            "encoder_choice": cfg.encoder, "quality": cfg.quality,
+            "encoder_choice": cfg.encoder, "quality": cfg.quality, "output_mode": cfg.output_mode,
             "options": {
                 "font": opt.font, "font_size": opt.font_size,
                 "sung_color": list(opt.sung_color),
@@ -1192,10 +1219,12 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
 
         acopy = (out_audio is None and (info["acodec"] in ("aac", "mp3", "ac3", "eac3")))
-        out_video = job_dir / f"{_safe(job)}_karaoke.mp4"
-        step(0.93, "烧录字幕并合成成片")
+        extension = '.mkv' if cfg.output_mode == 'soft' else '.mp4'
+        out_video = job_dir / f"{_safe(job)}_karaoke{extension}"
+        step(0.93, "封装 ASS 字幕轨" if cfg.output_mode == 'soft' else "烧录字幕并合成成片")
         used_enc = render_video(cfg.media, ass_path.name, job_dir, out_video,
-                               out_audio, info, cfg.encoder, cfg.quality, acopy, cancel=cancel)
+                               out_audio, info, cfg.encoder, cfg.quality, acopy, cancel=cancel,
+                               output_mode=cfg.output_mode)
         res.video = str(out_video)
         res.ok = True
         res.stats = {
@@ -1212,6 +1241,7 @@ def run(cfg: PipelineConfig, progress: ProgressFn | None = None,
             "alignment_audio_decoded": not use_word_times,
             "output_audio": Path(out_audio).name if out_audio else "original",
             "encoder": used_enc,
+            "output_mode": cfg.output_mode,
             "media": info,
             "rtf": round((time.perf_counter() - t00) / max(audio_dur, 0.01), 3),
         }
@@ -1252,6 +1282,7 @@ class RestyleRequest:
     draft_insertions: list[dict] = field(default_factory=list)
     retry_suspects: bool = False
     preview_only: bool = False
+    output_mode: str | None = None      # None 继承所选版本
 
 
 def _ass_opt_from(opts: dict) -> AssOptions:
@@ -1299,7 +1330,9 @@ def load_job(job_dir: str | Path, version: int = 0) -> tuple[dict, list[KaraokeL
         job['lang'] = aj.get('lang', job.get('lang'))
         if aj.get('audio_mode') == 'original':
             job['out_audio'] = None
-        job['encoder_choice'] = aj.get('encoder', job.get('encoder_choice', 'auto'))
+        if aj.get('encoder') in ('auto', 'nvenc', 'x264', 'h264_nvenc', 'libx264'):
+            job['encoder_choice'] = aj['encoder']
+    job['output_mode'] = aj.get('output_mode', job.get('output_mode', 'burn'))
     lines: list[KaraokeLine] = []
     for ln in aj["lines"]:
         toks = [KaraokeToken(text=t["text"], disp=t["disp"], unit=t.get("unit"),
@@ -1388,6 +1421,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
     req = req or RestyleRequest()
     jd = Path(job_dir)
     job, lines = load_job(jd, req.base_version)
+    output_mode = normalize_output_mode(req.output_mode if req.output_mode is not None else job.get('output_mode', 'burn'))
     from alignment_review import edit_reference, lyric_reference
     base_align = json.loads((jd / (f'align_v{req.base_version}.json'
                                    if req.base_version else 'align.json')).read_text(encoding='utf-8'))
@@ -1571,12 +1605,13 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
 
     out_audio = job.get("out_audio")
     acopy = out_audio is None and info.get("acodec") in ("aac", "mp3", "ac3", "eac3")
-    out_video = jd / f"{job['job']}_karaoke_v{ver}.mp4"
-    prog(0.5, "重新烧录成片")
+    extension = '.mkv' if output_mode == 'soft' else '.mp4'
+    out_video = jd / f"{job['job']}_karaoke_v{ver}{extension}"
+    prog(0.5, "重新封装 ASS 字幕轨" if output_mode == 'soft' else "重新烧录成片")
     used_enc = render_video(job["media"], ass_path.name, jd, out_video,
                            out_audio, info,
                            job.get("encoder_choice", "auto"),
-                           int(job.get("quality", 21)), acopy, cancel=cancel)
+                           int(job.get("quality", 21)), acopy, cancel=cancel, output_mode=output_mode)
     prog(1.0, f"完成：{out_video.name}")
 
     (jd / f"align_v{ver}.json").write_text(json.dumps({
@@ -1585,6 +1620,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
         "lang": job.get('lang'),
         "audio_mode": "original" if out_audio is None else "separated",
         "encoder": used_enc,
+        "output_mode": output_mode,
         "anchor_row": anchor_rows[0] if len(anchor_rows) == 1 else None,
         "anchor_rows": anchor_rows,
         "line_bounds": req.line_bounds,
@@ -1615,7 +1651,7 @@ def restyle(job_dir: str | Path, req: RestyleRequest | None = None,
                   jd/f'acceptance_v{ver}.json')
     return {"ok": True, "version": ver, "video": str(out_video),
             "ass": str(ass_path), "srt": str(srt_path), "health": health,
-            "encoder": used_enc, "anchor_rows": anchor_rows,
+            "encoder": used_enc, "output_mode": output_mode, "anchor_rows": anchor_rows,
             "operation": 'anchor_realign' if has_anchors else 'retime'}
 
 
@@ -1640,6 +1676,8 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--timed-mode", choices=["warp", "ignore"], default="warp")
     ap.add_argument("--encoder", choices=["auto", "nvenc", "x264", 'h264_nvenc', 'libx264'], default="auto")
     ap.add_argument("--quality", type=int, default=21)
+    ap.add_argument('--output-mode', choices=['burn', 'soft'], default='burn',
+                    help='burn: 烧录硬字幕 MP4；soft: 内封 ASS 字幕轨 MKV')
     ap.add_argument("--font", default="Microsoft YaHei")
     ap.add_argument("--font-size", type=int, default=66)
     ap.add_argument("--sung", default="FFD24A", help="已唱高亮色 RRGGBB")
@@ -1662,7 +1700,7 @@ def main(argv: list[str] | None = None) -> int:
         audio_track=args.audio_track, vocal_mode=args.vocal_mode, lang=args.lang,
         backend=args.backend, separate=not args.no_separate,
         demucs_model=args.demucs, device=args.device, timed_mode=args.timed_mode,
-        encoder=args.encoder, quality=args.quality, out_dir=args.out, job_name=args.name,
+        encoder=args.encoder, quality=args.quality, output_mode=args.output_mode, out_dir=args.out, job_name=args.name,
         ass=AssOptions(font=args.font, font_size=args.font_size,
                        sung_color=rgb(args.sung), unsung_color=rgb(args.unsung),
                        next_line=not args.no_next, group_same_unit=args.group_units,
