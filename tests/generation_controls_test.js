@@ -90,6 +90,15 @@ function harness() {
   };
 }
 const tests = {
+  async chosen_output_mode_reaches_generation_and_form_data() {
+    const h = harness(); h.media(); h.get('#outputMode').value = 'soft';
+    h.caps({...unavailable, whisper: {ok: true}}); await h.run();
+    assert.equal(h.uploads[0].config.outputMode, 'soft');
+    class Data {constructor(){this.values=new Map();} append(k,v){this.values.set(k,v);}}
+    h.context.FormData=Data; vm.runInContext(functionSource('buildRunForm'),h.context);
+    assert.equal(h.context.buildRunForm({name:'song.mp4'},{outputMode:'soft'}).values.get('output_mode'),'soft');
+    assert.equal(h.context.buildRunForm({name:'song.mp4'},{}).values.get('output_mode'),'burn');
+  },
   unknown_or_invalid_capabilities_fail_closed() {
     assert.equal(TaskClient.generationState(null, 'whisper').allowed, false);
     assert.equal(TaskClient.generationState({}, 'whisper').allowed, false);

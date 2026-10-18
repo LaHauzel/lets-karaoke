@@ -12,6 +12,7 @@
 <script src="/lyrics_format.js"></script>
 <script src="/lyrics_search.js"></script>
 <link rel="stylesheet" href="/theme.css">
+<script src="/workflow.js" defer></script>
 <link rel="stylesheet" href="/lyrics_search.css">
 <style>
 :root{
@@ -195,6 +196,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
   <span class="spacer"></span>
   <div class="studio-status"><span class="pill on">本地处理</span><span class="pill" id="devPill" role="status">连接工作台…</span></div>
 </header>
+<nav class="lk-workflow" aria-label="制作流程" data-workflow="karaoke"></nav>
 
 <nav class="workflow-strip" aria-label="制作流程">
   <a href="#inputCard"><span>01</span><div><b>准备素材</b><small>媒体与歌词</small></div></a>
@@ -505,6 +507,12 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
     </div>
     <div class="card generation-card" id="generationCard">
       <h2><span class="n">3</span>生成与复核 <span class="card-caption">处理将在后台队列继续</span></h2>
+      <label class="fl" for="outputMode">字幕输出方式</label>
+      <select id="outputMode">
+        <option value="burn">烧录硬字幕 · MP4（投稿、直接观看）</option>
+        <option value="soft">内封 ASS 字幕轨 · MKV（可关闭字幕、保留原画面）</option>
+      </select>
+      <p class="hint">两种方式都会另存 ASS / SRT。硬字幕写入画面；内封字幕需使用支持 ASS 的播放器。</p>
       <div id="inputReadiness" class="input-readiness" aria-live="polite"><span>○ 尚未选择媒体</span><span>○ 准备歌词</span></div>
       <p id="processingPlan" class="hint" aria-live="polite">选择歌词处理方式后，会在这里显示本次处理流程。</p>
       <button class="primary" id="btnRun" disabled>开始生成卡拉OK</button>
@@ -523,7 +531,10 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       <div class="card hidden" id="resultCard">
         <div class="result-media">
           <h2>成片</h2>
+          <div class="lk-result-links"><button type="button" class="ghost" id="openResultReview">在成品库复核此版本 →</button><button type="button" class="ghost" id="openResultSource" hidden>回到整场切割</button></div>
+          <p id="workspaceContext" class="hint" hidden></p>
           <video id="player" controls playsinline></video>
+          <p id="outputPlaybackHint" class="hint hidden">此文件为内封 ASS 的 MKV。网页预览可能无法播放或显示字幕，请下载后用支持 ASS 的播放器查看。</p>
           <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:8px">
             <button class="ghost" id="jumpPlayingLine">定位当前播放歌词 ↓</button>
             <label><input type="checkbox" id="followPlayingLine" style="width:auto"> 微调表自动跟随</label>
@@ -579,6 +590,11 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
         </table>
       </div>
       <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap">
+        <label>本次导出 <select id="editOutputMode" style="width:auto">
+          <option value="">跟随当前版本</option>
+          <option value="burn">烧录硬字幕 · MP4</option>
+          <option value="soft">内封 ASS 字幕轨 · MKV</option>
+        </select></label>
         <button class="primary" id="btnRerender" style="width:auto;flex:1">应用并重新渲染</button>
         <button class="ghost hidden" id="btnDiscardDraft">放弃暂存修改</button>
         <button class="ghost hidden" id="btnCancelEdit">取消微调任务</button>
@@ -630,9 +646,10 @@ function persistDraft(){
   }
   const editor=$('#tuneBody [data-insert-editor]');
   const insertion=editor?{after:Number(editor.querySelector('[data-insert-save]').dataset.insertSave),text:editor.querySelector('[data-insert-text]').value,mode:editor.querySelector('[data-insert-mode]').value,start:editor.querySelector('[data-insert-start]').value,end:editor.querySelector('[data-insert-end]').value}:null;
-  writeLocal(draftKey(),{draft_id:EDIT_DRAFT_ID,anchors:[...ANCHOR_ROWS],fields,insertion,options:styleOptions()});
+  writeLocal(draftKey(),{draft_id:EDIT_DRAFT_ID,anchors:[...ANCHOR_ROWS],fields,insertion,options:styleOptions(),output_mode:$('#editOutputMode').value});
 }
 async function restoreDraft(version){
+  $('#editOutputMode').value='';
   DRAFT_RESTORE_BLOCKED=false;
   EDIT_DRAFT_ID=null;
   const key=draftKey(JOB,version),identity=jobIdentity(JOB),raw=identity.startsWith('webui/')?identity.slice(6):JOB;
@@ -663,6 +680,7 @@ async function restoreDraft(version){
   }
   syncAllTokenEditStates();updateAnchorControls();WAVEFORM?.refresh();
   if(saved.fields?.length||saved.insertion)$('#rerenderMsg').textContent='已恢复尚未提交的修改；播放器显示已生成版本，确认后可提交。';
+  $('#editOutputMode').value=saved.output_mode||'';
 }
 
 // ---------------------------------------------------------------- 初始化
@@ -689,7 +707,7 @@ async function boot(){
     if(!await recoverTasks(js))await restoreWorkspace();
   } catch(e){ $('#devPill').textContent = '任务列表暂时无法连接'; showErr(e.message); }
 }
-boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('初始化失败：'+e.message);});
+const WORKSPACE_BOOT=boot().catch(e=>{$('#devPill').textContent='本地服务无法连接';showErr('初始化失败：'+e.message);});
 
 // 未安装的功能置灰并说明原因，避免提交后才在日志里看到缺少模块。
 function applyCapabilities(caps){
@@ -1009,18 +1027,35 @@ async function importConcertMedia(data){
     MEDIA_ITEMS=[];MEDIA_QUEUE=[];MEDIA_ACTIVE_INDEX=-1;
     refreshSrcUI();
     setMediaSelection(file,[file]);
+    MEDIA_ITEMS[0].concert_origin={concert_id:data.concert_id};
+    WORKSPACE_ORIGIN={concert_id:data.concert_id};
     $('#fnMedia').textContent=`已导入：${name}（${(file.size/1048576).toFixed(1)} MB）`;
     $('#dropMedia').scrollIntoView({behavior:'smooth',block:'center'});
   }catch(error){
     label.textContent=`导入失败：${error.message}`;
   }
 }
-window.addEventListener('message',event=>{
+let WORKSPACE_ORIGIN={},WORKSPACE_RESULT=null;
+window.addEventListener('message',async event=>{
   if(event.origin!==location.origin||event.source!==window.parent)return;
   if(event.data?.type==='lets-karaoke:ping'){
     window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);return;
   }
   if(event.data?.type==='lets-karaoke:import-concert-media')importConcertMedia(event.data);
+  if(event.data?.type==='lets-karaoke:context'&&event.data.job){
+    await WORKSPACE_BOOT;
+    if(GENERATION_BUSY||EDITING)return showErr('当前有任务正在运行，工作区已保留。请等待完成后再打开其他歌曲。');
+    try{
+      const data=event.data,record=await TaskClient.json('/api/versions?job='+encodeURIComponent(data.job));
+      if(!record.result||historyLocked(record))throw Error('当前记录尚未生成可打开的成片');
+      persistDraft();if(ES){ES.close();ES=null;}JOB=record.job;EDITABLE=record.editable;
+      const version=record.versions.find(v=>v.version===data.version&&v.video);
+      await finish(version?{...record.result,...version}:record.result);
+      WORKSPACE_ORIGIN={...WORKSPACE_ORIGIN,track_id:data.track_id,title:data.title};
+      $('#workspaceContext').hidden=false;$('#workspaceContext').textContent=`从成品复核打开：${data.title||record.title}。修改生成新版本后，可回成品库继续复核。`;
+      $('#resultCard').scrollIntoView({behavior:'smooth',block:'start'});
+    }catch(error){showErr('打开制作记录失败：'+error.message);}
+  }
 });
 window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);
 dropWire('#dropTrack', '#track', '#fnTrack');
@@ -1195,6 +1230,7 @@ function buildRunForm(media, config){
   fd.append('backend', config.backend);
   fd.append('timed_mode', config.timedMode);
   fd.append('encoder', config.encoder);
+  fd.append('output_mode', config.outputMode || 'burn');
   fd.append('quality', config.quality);
   fd.append('separate', config.separate ? '1' : '0');
   fd.append('options', config.options);
@@ -1243,6 +1279,7 @@ $('#btnRun').addEventListener('click', async () => {
       alignDual:$('#useDual').checked, track:$('#track').files[0],
       demucs:$('#demucs').value, backend:$('#backend').value, timedMode:$('#timedMode').value,
       encoder:$('#encoder').value, quality:$('#quality').value,
+      outputMode:$('#outputMode').value||'burn',
       separate:$('#separate').checked,
     };
   } catch(e) { showErr(e.message); return; }
@@ -1274,6 +1311,7 @@ $('#btnRun').addEventListener('click', async () => {
       };
       const job = await startMediaJob(media, itemConfig);
       JOB = job;
+      if(item.concert_origin)writeLocal('lets-karaoke:source:'+jobIdentity(job),item.concert_origin);
       submitted.push({job,name:media.name});BATCH_JOBS.add(job);
       rememberTask(job,{kind:'generate',name:media.name,created:Date.now()/1000});
       logLine(`第 ${i+1}/${queue.length} 个任务 ${job} 已提交：${media.name}`);
@@ -1453,7 +1491,11 @@ $('#btnCancel').addEventListener('click', async () => {
 });
 
 // ---------------------------------------------------------------- 结果
+function updateOutputPreview(video, mode){
+  $('#outputPlaybackHint').classList.toggle('hidden', !(mode==='soft'||/\.mkv$/i.test(video||'')));
+}
 async function finish(res, progressStart=0, progressSpan=1){
+  WORKSPACE_RESULT=res;
   DRAFT_RESTORE_BLOCKED=false;
   EDIT_DRAFT_ID=null;
   ALIGN=null;$('#tuneCard').classList.add('hidden');
@@ -1463,6 +1505,7 @@ async function finish(res, progressStart=0, progressSpan=1){
   const v = $('#player');
   v.src = base + encodeURIComponent(res.video) + '?t=' + Date.now();
   v.load();
+  updateOutputPreview(res.video, res.stats?.output_mode);
 
   const dl = $('#dlBox');
   dl.innerHTML = '';
@@ -1497,6 +1540,7 @@ async function finish(res, progressStart=0, progressSpan=1){
     ['实时倍速', (st.rtf||0).toFixed(2) + '×'],
     ['对齐来源', st.align_source], ['输出音轨', st.output_audio],
     ['编码器', st.encoder],
+    ['字幕输出', st.output_mode==='soft'?'ASS 字幕轨 · MKV':'硬字幕 · MP4'],
   ];
   $('#statBox').innerHTML = cells.map(([k,v]) =>
     `<div><b>${escapeText(v ?? '—')}</b><span>${k}</span></div>`).join('');
@@ -1538,8 +1582,19 @@ async function finish(res, progressStart=0, progressSpan=1){
   await loadVersions(res.version || 0);
   await loadAlign(res.version || '');
   await restoreDraft(res.version || 0);
+  $('#openResultSource').hidden=!WORKSPACE_ORIGIN.source&&!WORKSPACE_ORIGIN.concert_id;
   $('#btnResumeEdit').classList.toggle('hidden',!readLocal(editFailureKey(JOB),null));
 }
+
+$('#openResultReview').onclick=async()=>{
+  persistDraft();$('#player').pause();
+  try{
+    const data=await TaskClient.json('/api/review/library');
+    const track=data.tracks.find(t=>t.workflow?.job&&sameJob(t.workflow.job,JOB));
+    window.navigateWorkspace('review',track?{track_id:track.id,version:TUNE_VERSION}:{job:JOB});
+  }catch(error){showErr('无法打开成品库：'+error.message);}
+};
+$('#openResultSource').onclick=()=>{persistDraft();$('#player').pause();window.navigateWorkspace('concert',{source:WORKSPACE_ORIGIN.source,concert_id:WORKSPACE_ORIGIN.concert_id,time:WORKSPACE_ORIGIN.source_start||0});};
 
 async function refreshHistory(){
   $('#historyCount').textContent='扫描中…';
@@ -1599,6 +1654,7 @@ $('#deleteSelectedHistory').onclick=()=>deleteHistory(selectedHistory(),'选中�
 $('#clearHistory').onclick=()=>deleteHistory(HISTORY.filter(r=>!historyLocked(r)).map(r=>r.job),'全部可删除的历史记录（处理中任务会保留）');
 async function loadVersions(selected){
   const d=await TaskClient.json('/api/versions?job='+encodeURIComponent(JOB));
+  WORKSPACE_ORIGIN=Object.keys(d.review_origin||{}).length?d.review_origin:readLocal('lets-karaoke:source:'+jobIdentity(JOB),{});
   EDITABLE=d.editable;
   const select=$('#tuneVersion');select.replaceChildren();
   for(const version of d.versions.filter(v=>v.video)){
@@ -1888,6 +1944,7 @@ async function submitEdit(anchorRows=null,insertion=null,retry=false,deferRender
       job:JOB,base_version:TUNE_VERSION,retry_suspects:retry,anchor_rows:context.anchorRows,
       line_insertion:insertion,line_bounds:bounds,line_texts:lineTexts,line_offsets:offs,
       token_offsets:tokenOffs,options:styleOptions(),draft_id:EDIT_DRAFT_ID,defer_render:deferRender,
+      output_mode:$('#editOutputMode').value||null,
       async:ASYNC_EDIT_SUPPORTED,
     },{timeout:ASYNC_EDIT_SUPPORTED?20000:120000});
     if(d.operation_job){
@@ -1909,7 +1966,7 @@ async function submitEdit(anchorRows=null,insertion=null,retry=false,deferRender
 }
 function setEditBusy(busy){
   EDITING=busy;
-  for(const id of ['btnRetry','btnRerender','tuneVersion','btnReset'])$('#'+id).disabled=busy||!EDITABLE;
+  for(const id of ['btnRetry','btnRerender','tuneVersion','btnReset','editOutputMode'])$('#'+id).disabled=busy||!EDITABLE;
   refreshRunAvailability();
   $('#tuneBody').querySelectorAll('input,select,button').forEach(i=>i.disabled=busy||GENERATION_BUSY||!EDITABLE);
   $('#btnCancelEdit').classList.toggle('hidden',!busy);$('#btnCancelEdit').disabled=!EDIT_OPERATION;
@@ -1938,13 +1995,14 @@ async function applyEditResult(d,context={}){
   if(!d.video)throw new Error('微调任务未返回视频文件，请在历史记录检查。');
   const base='/files/'+JOB+'/',name=d.video.split(/[\\/]/).pop(),v=$('#player');
   v.src=base+encodeURIComponent(name)+'?t='+Date.now();v.load();TUNE_LOOP=null;
+  updateOutputPreview(name,d.output_mode);
   const a=document.createElement('a');a.href=base+encodeURIComponent(name)+'?download=1';a.textContent='↓ 微调版 v'+d.version;a.setAttribute('download',name);$('#dlBox').prepend(a);
   const h=d.health||{};$('#healthBadge').textContent=`防重叠自检 ${h.ok?'通过':'异常'}`;$('#healthBadge').className='badge '+(h.ok?'ok':'bad');
   removeLocal(draftKey(JOB,baseVersion));
   EDIT_DRAFT_ID=null;$('#btnDiscardDraft').classList.add('hidden');
   (d.logs||[]).forEach(l=>logLine(l));
   await loadVersions(d.version);await loadAlign(d.version);await refreshHistory();
-  $('#rerenderMsg').textContent=`已生成第 ${d.version} 版（编码器 ${d.encoder}）。`;
+  $('#rerenderMsg').textContent=`已生成第 ${d.version} 版（${d.output_mode==='soft'?'ASS 字幕轨 MKV':'硬字幕 MP4'}，编码器 ${d.encoder}）。`;
   $('#insertMsg').textContent=insertion?'插入完成，已生成版本 v'+d.version+'。':'';
 }
 async function recoverEdit(entry){
@@ -2032,11 +2090,11 @@ $('#tuneSpeed').onchange=()=>{$('#player').playbackRate=Number($('#tuneSpeed').v
 $('#player').addEventListener('timeupdate',()=>{const v=$('#player');if(TUNE_LOOP&&v.currentTime>=TUNE_LOOP.end)v.currentTime=TUNE_LOOP.start;});
 $('#tuneVersion').onchange=async()=>{
   persistDraft();const s=$('#tuneVersion'),v=$('#player');TUNE_LOOP=null;EDIT_DRAFT_ID=null;
-  try{await loadAlign(Number(s.value)||'');v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();await restoreDraft(Number(s.value)||0);}
+  try{await loadAlign(Number(s.value)||'');v.pause();v.src=s.selectedOptions[0].dataset.video;v.load();updateOutputPreview(v.src.split('?')[0]);await restoreDraft(Number(s.value)||0);}
   catch(error){EDITABLE=false;setEditBusy(false);showErr('版本无法加载：'+error.message+'；重新打开历史记录可重试。');}
 };
 for(const eventName of ['input','change'])document.addEventListener(eventName,event=>{
-  if(['font','fontSize','sung','unsung','lineCount','positionX','positionY','leadMs','tailMs','groupUnit'].includes(event.target.id))persistDraft();
+  if(['font','fontSize','sung','unsung','lineCount','positionX','positionY','leadMs','tailMs','groupUnit','editOutputMode'].includes(event.target.id))persistDraft();
 });
 
 function lyricsContextKey(){return `media-${MEDIA_SELECTION_VERSION}-${MEDIA_ACTIVE_INDEX}`;}

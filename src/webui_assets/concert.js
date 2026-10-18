@@ -55,7 +55,7 @@ function draw(){
   rows.slice(1).forEach((s,i)=>{const x=s.start/job.duration*w;ctx.strokeStyle=(i+1===activeBoundary)?'#f0883e':'#58a6ff';ctx.lineWidth=(i+1===activeBoundary)?3:1;ctx.beginPath();ctx.moveTo(x,3);ctx.lineTo(x,87);ctx.stroke();ctx.fillStyle=(i+1===activeBoundary)?'#f0883e':'#58a6ff';ctx.fillRect(x-4,3,8,8);});
   ctx.strokeStyle='#ffd24a';ctx.lineWidth=1;const x=$('player').currentTime/job.duration*w;ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x,90);ctx.stroke();
 }
-function exportsUI(){const root=$('downloads');root.replaceChildren();for(const ex of [...(job?.exports||[])].reverse()){const section=document.createElement('section'),p=document.createElement('p');p.className='hint';p.textContent=`${ex.state&&ex.state!=='done'?'未完成批次 · ':''}已导出 ${ex.files.length} 段 · ${ex.mode==='copy'?'快速模式':'精确模式'}`;p.title=ex.path||'';section.append(p);if(['cancelled','error','interrupted'].includes(ex.state)&&ex.segments?.length){const resume=document.createElement('button');resume.textContent='继续未完成片段';resume.onclick=async()=>{loading=true;controls();try{if(dirty)await save();const d=await api('resume-export',{id:job.id,export_id:ex.id});await load(d.id,d.version);}catch(e){fail(e);}finally{loading=false;controls();}};section.append(resume);}const links=document.createElement('div');links.className='links';for(const f of [...ex.files,{file:'manifest.json',title:'导出清单'}]){const a=document.createElement('a');a.textContent=f.title;a.href=`/concert-files/${job.id}/${ex.id}/${encodeURIComponent(f.file)}?download=1`;links.append(a);if(f.file!=='manifest.json'&&/\.(mp4|mkv|mov|webm|m4v)$/i.test(f.file)){const button=document.createElement('button');button.type='button';button.className='importKaraoke';button.textContent='导入卡拉 OK';button.title=`导入 ${f.title||f.file} 并切换到卡拉 OK 字幕`;button.onclick=()=>window.parent.postMessage({type:'lets-karaoke:import-concert-media',url:`/concert-files/${encodeURIComponent(job.id)}/${encodeURIComponent(ex.id)}/${encodeURIComponent(f.file)}`,name:f.file,size:f.size||0},location.origin);links.append(button);}}section.append(links);root.append(section);}}
+function exportsUI(){const root=$('downloads');root.replaceChildren();for(const ex of [...(job?.exports||[])].reverse()){const section=document.createElement('section'),p=document.createElement('p');p.className='hint';p.textContent=`${ex.state&&ex.state!=='done'?'未完成批次 · ':''}已导出 ${ex.files.length} 段 · ${ex.mode==='copy'?'快速模式':'精确模式'}`;p.title=ex.path||'';section.append(p);if(['cancelled','error','interrupted'].includes(ex.state)&&ex.segments?.length){const resume=document.createElement('button');resume.textContent='继续未完成片段';resume.onclick=async()=>{loading=true;controls();try{if(dirty)await save();const d=await api('resume-export',{id:job.id,export_id:ex.id});await load(d.id,d.version);}catch(e){fail(e);}finally{loading=false;controls();}};section.append(resume);}const links=document.createElement('div');links.className='links';for(const f of [...ex.files,{file:'manifest.json',title:'导出清单'}]){const a=document.createElement('a');a.textContent=f.title;a.href=`/concert-files/${job.id}/${ex.id}/${encodeURIComponent(f.file)}?download=1`;links.append(a);if(f.file!=='manifest.json'&&/\.(mp4|mkv|mov|webm|m4v)$/i.test(f.file)){const button=document.createElement('button');button.type='button';button.className='importKaraoke';button.textContent='导入卡拉 OK';button.title=`导入 ${f.title||f.file} 并切换到卡拉 OK 字幕`;button.onclick=()=>window.parent.postMessage({type:'lets-karaoke:import-concert-media',url:`/concert-files/${encodeURIComponent(job.id)}/${encodeURIComponent(ex.id)}/${encodeURIComponent(f.file)}`,name:f.file,size:f.size||0},location.origin);links.append(button);}if(f.review_track_id){const review=document.createElement('button');review.type='button';review.textContent='查看已有成品';review.onclick=()=>window.navigateWorkspace('review',{track_id:f.review_track_id});links.append(review);}}section.append(links);root.append(section);}}
 function renderVersions(d){const select=$('version');select.replaceChildren();const versions=d.analysis_versions||[];if(!versions.length){const o=document.createElement('option');o.textContent='处理中';o.value='';select.append(o);select.disabled=true;renderSpeechReview();return;}select.disabled=false;for(const v of versions){const o=document.createElement('option');o.value=v.version;o.textContent=`v${v.version} · ${v.sensitivity} · ${v.candidates?.length||0} 个候选`;select.append(o);}select.value=String(d.selected_version||d.analysis_version||versions[versions.length-1].version);renderSpeechReview();}
 function sameSource(a,b){
   const normalize=value=>{
@@ -97,5 +97,27 @@ $('player').addEventListener('timeupdate',()=>{$('playTime').textContent=fmt($('
 $('mode').onchange=()=>{$('modeHelp').textContent=$('mode').value==='copy'?'快速模式不重新压缩，速度快；受视频关键帧限制，开头可能包含切点前的画面。':'精确模式使用 H.264 重新编码，保留指定起止时间，整场导出耗时较长。建议先选一段检查。';};
 $('player').addEventListener('error',()=>{if(job)fail(Error($('player').error?.code===4?'浏览器无法播放此编码。仍可分析和导出；请用外部播放器试听，或精确导出为兼容 MP4。':'视频读取失败，请确认原视频仍存在且没有被移动或替换。'));});
 window.addEventListener('resize',draw);window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue='';}});
-history().then(async jobs=>{const stored=localStorage.getItem('concert-job'),id=jobs.find(j=>j.id===stored)?.id||jobs[0]?.id;if(id)await load(id);}).catch(fail);controls();
+const boot=history().then(async jobs=>{const stored=localStorage.getItem('concert-job'),id=jobs.find(j=>j.id===stored)?.id||jobs[0]?.id;if(id)await load(id);}).catch(fail);controls();
+window.addEventListener('message',async event=>{
+  if(event.origin!==location.origin||event.source!==window.parent)return;
+  if(event.data?.type==='lets-karaoke:ping'){window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);return;}
+  if(event.data?.type!=='lets-karaoke:context')return;
+  await boot;
+  if(loading||busy||dirty)return fail(Error('当前切割工作区有处理中任务或未保存调整，已保留。请先保存后再打开其他源视频。'));
+  try{
+    const context=event.data,jobs=await api('jobs');
+    const target=jobs.find(j=>j.id===context.concert_id)||jobs.find(j=>context.source&&sameSource(j.source,context.source));
+    if(target){
+      await load(target.id);
+      const player=$('player'),jump=()=>seek(Math.min(context.time||0,job.duration));
+      if(player.readyState>=1)jump();else player.addEventListener('loadedmetadata',jump,{once:true});
+      $('status').textContent=`已定位 ${context.title||'来源视频'}，可继续试听和调整边界。`;
+    }else if(context.source){
+      $('source').value=context.source;
+      $('status').textContent=`已带入 ${context.title||'歌曲'} 的整场源视频。点击“分析歌曲边界”建立切割记录。`;
+      $('source').scrollIntoView({behavior:'smooth',block:'center'});
+    }
+  }catch(error){fail(error);}
+});
+window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);
 })();

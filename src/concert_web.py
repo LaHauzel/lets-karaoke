@@ -555,7 +555,7 @@ def dispatch_get(handler, path, query):
                         if raw.get('merged_into'):
                             continue
                         j = snapshot(identifier)
-                    records.append({k: j.get(k) for k in ('id', 'name', 'state', 'duration', 'created', 'message', 'analysis_version', 'version_count', 'sensitivity')})
+                    records.append({k: j.get(k) for k in ('id', 'name', 'source', 'state', 'duration', 'created', 'message', 'analysis_version', 'version_count', 'sensitivity')})
                 except (OSError, ValueError, KeyError, TypeError):
                     continue
             return handler._json(sorted(records, key=lambda j: -j['created']))

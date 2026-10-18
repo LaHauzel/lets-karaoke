@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>成品与人工复核 · lets-karaoke</title>
+  <link rel="stylesheet" href="/theme.css">
+  <script src="/workflow.js" defer></script>
+  <link rel="stylesheet" href="/review-assets/library.css">
+  <link rel="stylesheet" href="/review-assets/human-review.css">
+  <script src="/review-assets/human-review.js" defer></script>
+  <script src="/review-assets/library.js" defer></script>
+</head>
+<body>
+<main>
+  <header class="masthead">
+    <div><div class="eyebrow">成品工作台</div>
+      <h1>听看每一首，确认每一个版本</h1>
+      <p class="intro">预览成品、记录问题，再把通过的版本整理出来。</p>
+    </div>
+    <div class="header-actions"><a id="revisionReportLink" class="button" href="/review-exports/revisions/index.html" target="_blank" rel="noopener" hidden>本轮修订报告 ↗</a><a class="button" href="/review-exports/index.html" target="_blank" rel="noopener">原始报告 ↗</a><button id="refresh">刷新清单</button><span id="updated" class="muted"></span></div>
+  </header>
+  <nav class="lk-workflow" aria-label="制作流程" data-workflow="review"></nav>
+  <section class="stats" aria-label="成品统计">
+    <button class="stat" data-preset="all"><span>曲目总数</span><strong id="totalCount">—</strong><small>本地成品 · 按演唱会分组</small></button>
+    <button class="stat accent" data-preset="recommended"><span>首批投稿候选</span><strong id="recommendedCount">—</strong><small>较高置信度 + 修订双语 MP4</small></button>
+    <button class="stat" data-preset="hard"><span>硬字幕 MP4</span><strong id="hardCount">—</strong><small id="hardNote">可在浏览器预览</small></button>
+    <button class="stat" data-preset="soft"><span>ASS 字幕轨 MKV</span><strong id="softCount">—</strong><small>可切换字幕 · 在本机播放器查看</small></button>
+  </section>
+  <details class="method"><summary>如何读这份置信度？ <span>模型分数不是准确率；人工复核状态由你单独记录。</span></summary>
+    <p>分级沿用现有报告：综合模型中位分、较高／较低置信行的比例和结构检查。“较高”要求中位分 ≥ 0.8、较低置信行 ≤ 18%、较高置信行 ≥ 65%；中位分 &lt; 0.6 或较低置信行 &gt; 45% 列为“较低”。需修复的结构问题优先标记。</p>
+    <p>“中文已修订”表示助手已逐行复核文字含义，不代表逐句人工听看或专业译审。伴奏仍可能有人声残留。实验试片仅用于对比，未替换正式成品。</p>
+  </details>
+  <section class="catalog" aria-label="曲目列表">
+    <div class="toolbar">
+      <label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索歌名、歌手或演唱会…" aria-label="搜索歌名、歌手或演唱会"></label>
+      <label>演唱会<select id="project"><option value="">全部演唱会</option></select></label>
+      <label>成品类型<select id="availability"><option value="">全部成品</option><option value="recommended">首批投稿候选</option><option value="hard">有硬字幕 MP4</option><option value="reviewed">有修订双语版</option><option value="soft">有 ASS 字幕轨 MKV</option><option value="experiment">有模型对照试片</option></select></label>
+      <label>人工复核<select id="reviewFilter"><option value="">全部状态</option><option value="unchecked">未检查</option><option value="passed">通过</option><option value="needs_changes">需要修改</option><option value="ready">通过的 MP4（投稿筛选）</option><option value="stale">新修订 / 视频变化，待复核</option></select></label>
+      <label>排序<select id="sort"><option value="confidence">置信度从高到低</option><option value="risk">置信度从低到高</option><option value="order">演唱会曲目顺序</option><option value="title">歌名</option></select></label>
+    </div>
+    <div class="list-top"><div class="chips" role="group" aria-label="置信度筛选">
+      <button class="chip active" data-grade="" aria-pressed="true">全部 <span id="chipAll"></span></button>
+      <button class="chip" data-grade="high" aria-pressed="false">较高 <span id="chipHigh"></span></button>
+      <button class="chip" data-grade="medium" aria-pressed="false">中等 <span id="chipMedium"></span></button>
+      <button class="chip" data-grade="low" aria-pressed="false">较低 / 需修复 <span id="chipLow"></span></button>
+    </div><div><span id="resultCount" class="muted">读取清单中…</span><button id="clear" class="text-button">重置</button></div></div>
+    <div class="review-summary"><span id="reviewCounts">人工复核：读取中…</span><a href="/api/review/reviews/export" download="human-reviews.json">导出复核记录 JSON ↓</a></div>
+    <div id="loadError" class="error" hidden></div>
+    <div class="table-scroll"><table class="tracks"><thead><tr><th>曲目 / 演唱会</th><th>对齐置信度</th><th>较高置信行</th><th>较低置信行</th><th>可用视频</th><th>时长</th><th>操作</th></tr></thead><tbody id="trackRows"></tbody></table></div>
+    <div id="empty" class="empty" hidden>没有符合条件的曲目。试试更短的歌名，或重置筛选。</div>
+  </section>
+  <footer><span id="inventoryNote">读取本地成品清单…</span><nav><a href="/review-exports/reviewed-samples/index.html" target="_blank" rel="noopener">译文修订对照 ↗</a><a href="/review-exports/model-comparison/index.html" target="_blank" rel="noopener">模型实验 ↗</a></nav><p id="dataWarning" hidden></p><p id="reviewStorage" class="path"></p></footer>
+</main>
+<dialog id="trackDialog" aria-labelledby="dialogTitle">
+  <div class="dialog-header"><div><div id="dialogConcert" class="eyebrow"></div><h2 id="dialogTitle"></h2></div><button id="closeDialog" class="close" aria-label="关闭曲目详情">×</button></div>
+  <div class="dialog-body">
+    <div class="detail-grid">
+      <section class="player-section" aria-label="视频预览">
+        <video id="player" controls preload="metadata" playsinline hidden></video>
+        <div id="playerPlaceholder" class="player-placeholder"><div class="file-icon">MKV</div><h3>在本机播放器中查看</h3><p>浏览器无法完整显示 MKV 中的 ASS 卡拉 OK 效果。点击下方按钮，在资源管理器中选中文件后用支持 ASS 的播放器打开。</p></div>
+        <label class="version-label">当前视频<select id="version" aria-label="选择视频版本"></select></label>
+        <div id="fileStatus" class="file-status"></div>
+        <div class="file-actions"><button id="revealSelected" class="primary">在资源管理器中显示</button><button id="copySelected">复制完整路径</button><a id="openVideo" class="button" target="_blank" rel="noopener">独立预览 ↗</a></div>
+        <div id="selectedPath" class="path"></div>
+        <div class="workflow-actions"><button id="editSelected">修改原文字幕 →</button><button id="sourceSelected">回到整场切割</button></div>
+        <p id="workflowHint" class="muted small"></p>
+        <p id="playbackError" class="error" hidden></p>
+      </section>
+      <aside class="confidence-panel">
+        <div id="detailGrade"></div><div class="score-line"><strong id="detailScore"></strong><span>模型中位分<br>未校准为准确率</span></div>
+        <div class="detail-numbers"><div><b id="detailHigh"></b><small>较高置信行 / 总行数</small></div><div><b id="detailLow"></b><small>较低置信行</small></div></div>
+        <div id="translationStatus" class="translation-status"></div>
+        <p id="auditStatus" class="review-alert" hidden></p><p id="revisionStatus" class="translation-status"></p><p id="acceptanceStatus"></p><p id="structureStatus"></p>
+        <div id="repairStatus" class="review-alert" hidden></div>
+        <details><summary>低置信行与自动验收提示</summary><div id="riskDetails"></div></details>
+      </aside>
+    </div>
+    <section id="humanReviewSection" class="detail-section human-review" aria-label="人工复核记录">
+      <div class="section-title"><h3>人工复核记录</h3><span id="reviewSavedAt" class="muted small"></span></div>
+      <p class="muted small">状态按歌曲记录；“通过”只对应下方选定的视频版本。时间使用本首歌曲的时间轴，实验片段会自动换算。</p>
+      <fieldset id="reviewFields">
+        <div class="review-fields">
+          <label>复核状态<select id="humanStatus"><option value="unchecked">未检查</option><option value="passed">通过</option><option value="needs_changes">需要修改</option></select></label>
+          <label>本次复核的视频版本<select id="reviewFile"></select></label>
+        </div>
+        <button id="usePlayingVersion" class="text-button" type="button">使用当前播放版本</button>
+        <label class="review-notes">歌曲备注<textarea id="reviewNotes" rows="3" maxlength="10000" placeholder="例如：副歌对齐正常；第二段中文需要再确认。"></textarea></label>
+        <div class="section-title issue-title"><h4>问题行与时间点 <span id="issueCount" class="muted"></span></h4><div class="file-actions"><button id="addIssue" type="button">添加问题</button><button id="captureIssue" type="button">记录当前播放时间</button></div></div>
+        <p class="muted small">可填行号、时间点或两者。时间支持 02:20.500 或秒数；每条问题填写说明。解决后可勾选“已解决”保留记录。</p>
+        <div id="reviewIssues"></div>
+      </fieldset>
+      <p id="reviewError" class="error" role="alert" hidden></p>
+      <div id="reviewConflict" class="review-alert" hidden><p>磁盘已有较新的记录。当前编辑仍保留，请先下载草稿，再载入最新记录进行合并。</p><button id="downloadReviewDraft">下载本次草稿</button><button id="loadLatestReview">载入磁盘记录（放弃本次编辑）</button></div>
+      <div class="review-actions"><span id="reviewSaveStatus" role="status">尚无人工复核记录</span><button id="saveReview" class="primary" type="button">保存到本地</button></div>
+      <details id="reviewHistorySection" hidden><summary>历史审批记录（只读）</summary><div id="reviewHistory"></div></details>
+      <div id="reviewCloseGuard" class="review-alert" hidden><p>有尚未保存的复核修改。</p><button id="saveReviewClose" class="primary">保存并关闭</button><button id="continueReview">继续编辑</button><button id="discardReview">放弃本次修改并关闭</button></div>
+    </section>
+    <section class="detail-section"><div class="section-title"><h3>正式成品的逐行对齐证据</h3><label class="inline"><input id="onlyRisk" type="checkbox" checked> 只看待复核行</label></div>
+      <p class="muted small">点击时间可跳到 MP4 对应位置；MKV 请在本机播放器中查看。没有双路证据的行显示「缺失」。这里的评分来自现有正式成品，切换实验片段不会改变评分；实验结果见模型对照报告。</p>
+      <div class="evidence-scroll"><table class="evidence"><thead><tr><th>歌词 / 行号</th><th>歌曲内时间</th><th>模型分数</th><th>双路边界分歧</th><th>提示 / 人工记录</th></tr></thead><tbody id="evidenceRows"></tbody></table></div>
+    </section>
+    <details class="detail-section"><summary id="filesSummary">所有生成视频</summary><div id="allFiles" class="file-list"></div></details>
+    <details class="detail-section"><summary>字幕与检查记录</summary><div id="supportFiles" class="file-list"></div><div id="translationNotes"></div></details>
+    <section id="experimentSection" class="detail-section" hidden><h3>模型对照实验 · 片段</h3><p id="experimentNote" class="muted"></p><div id="experimentFiles" class="file-list"></div><a href="/review-exports/model-comparison/index.html" target="_blank" rel="noopener">打开完整模型对照报告 ↗</a></section>
+  </div>
+</dialog>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

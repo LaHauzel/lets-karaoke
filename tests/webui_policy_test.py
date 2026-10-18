@@ -45,6 +45,23 @@ class HttpPolicyTests(unittest.TestCase):
                 data={'whisper': '1', 'lyrics_text': 'a', 'rules': rules})
             self.assertEqual(response.status_code, 400, response.text)
 
+    def test_output_mode_is_validated_and_forwarded(self):
+        for mode in ('burn', 'soft'):
+            done, configs = threading.Event(), []
+            def worker(job, cfg):
+                configs.append(cfg); done.set()
+            with patch.object(webui, '_run_job', side_effect=worker):
+                response = requests.post(self.base+'/api/run', timeout=5,
+                    files={'media': ('test.wav', b'test')},
+                    data={'whisper':'1', 'lyrics_text':'a', 'output_mode':mode})
+                self.assertEqual(response.status_code, 200, response.text)
+                self.assertTrue(done.wait(5))
+                self.assertEqual(configs[0]['output_mode'], mode)
+        response = requests.post(self.base+'/api/run', timeout=5,
+            files={'media': ('test.wav', b'test')},
+            data={'whisper':'1', 'lyrics_text':'a', 'output_mode':'invalid'})
+        self.assertEqual(response.status_code, 400, response.text)
+
     def test_both_routes_receive_rules(self):
         for route in ('whisper', 'sofa', 'asr'):
             done = threading.Event()

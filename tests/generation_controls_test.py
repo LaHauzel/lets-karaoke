@@ -13,7 +13,7 @@ class GenerationControlsTests(unittest.TestCase):
             text=True, encoding='utf-8', timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count('PASS '), 13, result.stdout)
+        self.assertEqual(result.stdout.count('PASS '), 14, result.stdout)
 
 
 if __name__ == '__main__':

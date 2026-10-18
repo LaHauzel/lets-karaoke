@@ -28,6 +28,7 @@
 | ONNX Runtime / YAMNet ONNX | requirements 范围 / 外部模型页 | MIT / Apache-2.0 | 保留 ONNX 附带第三方通知；模型单独下载，不入库 |
 | webrtcvad-wheels | 2.x | MIT Python 包装；内含 WebRTC BSD 通知 | 按实际 wheel 核对并保留内嵌通知 |
 | pywin32 | Windows 条件依赖 | PSF License | 进程退出回收所需；按实际安装包保留许可 |
+| filelock | 3.32.3（2026-10-18 本地包元数据） | MIT | 人工复核的跨进程写锁；分发时保留实际版本的许可证 |
 | requests / Node.js | Qwen下载器及HTTP测试 / 前端测试工具 | Apache-2.0 / MIT 及附带第三方许可 | 按下载器与测试环境的实际分发核对 |
 | qwen-asr / transformers / huggingface-hub | 0.0.6 / 4.57.6 / 0.34.4 | Apache-2.0 | 保留 Apache 通知；模型条款另行核对 |
 | pykakasi | 2.3.0 | GPL-3.0-or-later | 需要 GPL 兼容性审查；建议改为可选依赖 |

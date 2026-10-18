@@ -1,0 +1,40 @@
+// Exercise the real browser helpers without a running server or user records.
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const context=vm.createContext({structuredClone,isMP4:f=>f.name.endsWith('.mp4')});
+vm.runInContext(fs.readFileSync(path.join(__dirname,'../src/webui_assets/library/human-review.js'),'utf8'),context);
+const call=(name,...args)=>{context.testArgs=args;return vm.runInContext(`${name}(...testArgs)`,context);};
+assert.equal(call('parseReviewTime','02:10.375'),130.375);
+assert.equal(call('parseReviewTime','1:02:03.500'),3723.5);
+assert.equal(call('parseReviewTime',''),null);
+for(const value of ['1:60','-1','00:01.1234','1e3'])assert.throws(()=>call('parseReviewTime',value));
+const track={default_file:'new',files:[{id:'old',exists:true,name:'old.mp4'}, {id:'new',exists:true,name:'new.mp4'}],
+  human_review:{status:'passed',file_id:'old',stale:false,new_version:true}};
+assert.equal(call('preferredHumanFile',track),'new');
+assert.equal(call('matchesHumanReview',track,'ready'),false);
+assert.equal(call('matchesHumanReview',track,'stale'),true);
+track.human_review={status:'passed',file_id:'new',stale:false,new_version:false};
+assert.equal(call('preferredHumanFile',track),'new');
+assert.equal(call('matchesHumanReview',track,'ready'),true);
+track.human_review.stale=true;
+assert.equal(call('matchesHumanReview',track,'ready'),false);
+const lyrics={evidence:[{row:1,start:1,end:3,text:'旧版歌词'}],
+  revision:{revision:'r2',evidence:[{row:1,start:2,end:4,text:'新版歌词'}]}};
+const original={id:'old'},updated={id:'new',revision:'r2'};
+assert.equal(call('evidenceForFile',lyrics,original)[0].text,'旧版歌词');
+assert.equal(call('evidenceForFile',lyrics,updated)[0].text,'新版歌词');
+assert.equal(call('evidenceForFile',lyrics,{revision:'missing'}).length,0);
+assert.equal(call('evidenceForFile',lyrics,{revision:'native-v1',evidence:[{text:'中间版本'}]})[0].text,'中间版本');
+assert.equal(call('issueLyricContext',lyrics,{rowText:'1'},original).row.text,'旧版歌词');
+assert.equal(call('issueLyricContext',lyrics,{rowText:'1'},updated).row.text,'新版歌词');
+assert.equal(call('issueLyricContext',lyrics,{rowText:'',timeText:'00:02.500'},updated).row.row,1);
+assert.ok(call('issueLyricContext',lyrics,{rowText:'',timeText:'00:01.000'},updated).message.includes('没有对应歌词'));
+assert.ok(call('issueLyricContext',lyrics,{rowText:'99',timeText:'00:02.500'},updated).message.includes('没有对应行号'));
+assert.ok(call('issueLyricContext',lyrics,{rowText:'1'},null).message.includes('未绑定'));
+context.selectedTrack=lyrics;context.esc=s=>String(s).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;');
+lyrics.evidence[0].text='<img src=x onerror=alert(1)>';
+assert.ok(call('issueLyricsHTML',{rowText:'1'},original).includes('&lt;img'));
+assert.ok(!call('issueLyricsHTML',{rowText:'1'},original).includes('<img'));
+console.log('Review UI: timestamps, version-bound lyrics, gaps, escaping and approval checks passed.');

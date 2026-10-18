@@ -366,7 +366,8 @@ def perform_edit(data, operation=None):
         retry_suspects=data.get('retry_suspects') is True,
         line_offsets_ms={int(k):float(v) for k,v in (data.get('line_offsets') or {}).items()},
         token_offsets_ms={str(k):float(v) for k,v in (data.get('token_offsets') or {}).items()},
-        overrides=data.get('options') or {}, preview_only=data.get('defer_render') is True)
+        overrides=data.get('options') or {}, preview_only=data.get('defer_render') is True,
+        output_mode=data.get('output_mode') or None)
     logs = []
     def progress(frac, message):
         logs.append(f'[{frac*100:5.1f}%] {message}')
@@ -594,6 +595,7 @@ def _run_job(job: Job, cfg_kwargs: dict) -> None:
             timed_mode="warp" if (need_sofa or need_whisper or need_asr) else cfg_kwargs.get("timed_mode", "warp"),
             encoder=cfg_kwargs.get("encoder", "auto"),
             quality=int(cfg_kwargs.get("quality", 21)),
+            output_mode=cfg_kwargs.get('output_mode', 'burn'),
             ass=ass,
         )
         res = run(cfg, progress=prog, cancel=cancel, cache=_ensure_cache(cfg.device))
@@ -1297,6 +1299,9 @@ class Handler(BaseHTTPRequestHandler):
             from http_support import request_allowed
             if not request_allowed(self):
                 return self._json({'error':'仅允许本地工作台访问'},403)
+            if u.path == '/review' or u.path.startswith(('/api/review/', '/review-assets/', '/review-exports/', '/review-native/')):
+                from review_web import dispatch_get
+                return dispatch_get(self, u.path)
             if u.path.startswith('/api/concert/') or u.path.startswith('/concert-files/'):
                 from concert_web import dispatch_get
                 return dispatch_get(self, u.path, q)
@@ -1330,7 +1335,7 @@ class Handler(BaseHTTPRequestHandler):
                     "capabilities": capabilities(),
                 })
             if u.path in ('/diagnostics.js', '/diagnostics.css', '/lyric_waveform.js', '/review.css', '/task_client.js',
-                          '/theme.css', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css', '/lyrics_format.js'):
+                          '/theme.css', '/workspace.js', '/workflow.js', '/karaoke.css', '/lyrics_search.js', '/lyrics_search.css', '/lyrics_format.js'):
                 return self._send(200, 'text/javascript; charset=utf-8' if u.path.endswith('.js') else 'text/css; charset=utf-8', (ASSETS/u.path[1:]).read_bytes())
             if u.path == "/api/events":
                 return self._sse(q.get("job", [""])[0])
@@ -1397,6 +1402,9 @@ class Handler(BaseHTTPRequestHandler):
             required = 'multipart/form-data' if u.path == '/api/run' else 'application/json'
             if required != self.headers.get('Content-Type','').split(';',1)[0].strip().lower():
                 return reject_post(self, {'error':'请求类型不正确'},415)
+            if u.path.startswith('/api/review/'):
+                from review_web import dispatch_post
+                return dispatch_post(self, u.path)
             if u.path.startswith('/api/concert/'):
                 from concert_web import dispatch_post
                 return dispatch_post(self, u.path)
@@ -1613,6 +1621,11 @@ class Handler(BaseHTTPRequestHandler):
         if kwargs.get('sofa_align') and kwargs.get('lang','auto') not in {'auto','ja'}:
             return self._json({'error':'当前 SOFA 音素路线仅支持日语；中文/英文请使用 Whisper。'},400)
         kwargs["quality"] = int(fields.get("quality") or 21)
+        from pipeline import normalize_output_mode
+        try:
+            kwargs['output_mode'] = normalize_output_mode(fields.get('output_mode') or 'burn')
+        except ValueError as exc:
+            return self._json({'error': str(exc)}, 400)
         kwargs["separate"] = (fields.get("separate", "1") not in ("0", "false", ""))
         kwargs["device"] = fields.get("device") or DEFAULT_DEVICE
         try:

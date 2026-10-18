@@ -37,6 +37,16 @@ button, input, select, textarea, a { -webkit-tap-highlight-color: transparent; }
 .lk-button:disabled { opacity: .45; cursor: not-allowed; }
 .lk-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--lk-accent); flex: none; }
 
+.lk-workflow { display:flex; align-items:center; flex-wrap:wrap; gap:8px; width:min(100%,1680px); margin:18px auto 0; padding:0 32px; }
+.lk-workflow button { display:inline-flex; align-items:center; gap:8px; min-height:34px; padding:6px 12px; background:transparent; color:var(--lk-muted); border:1px solid var(--lk-border); border-radius:9px; font-size:12px; cursor:pointer; }
+.lk-workflow button span { font:11px var(--lk-mono); opacity:.7; }
+.lk-workflow button[aria-current] { background:#163931; color:var(--lk-accent); border-color:#326558; opacity:1; cursor:default; }
+.lk-workflow button:hover:not(:disabled) { border-color:var(--lk-accent); color:var(--lk-text); }
+.lk-workflow small { color:var(--lk-muted); font-size:11px; margin-left:auto; }
+.lk-result-links { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.lk-result-links button { min-height:34px; font-size:12px; }
+@media(max-width:720px) { .lk-workflow{padding-inline:16px}.lk-workflow small{flex-basis:100%;margin-left:0}.lk-workflow button{flex:1;padding:6px 8px;white-space:nowrap} }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     animation-duration: .01ms !important;
