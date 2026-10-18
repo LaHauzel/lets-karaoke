@@ -25,6 +25,8 @@ def main():
     if not result.wasSuccessful():
         return 1
     subprocess.run([sys.executable,'-X','utf8',str(ROOT/'tests/asr_lyrics_test.py')],cwd=ROOT,check=True)
+    for path in sorted((ROOT/'tests').glob('*_test.js')):
+        subprocess.run(['node',str(path)],cwd=ROOT,check=True)
     return 0
 
 

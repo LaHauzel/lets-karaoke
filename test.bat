@@ -1,7 +1,11 @@
 @echo off
 setlocal
 cd /d "%~dp0"
-if exist "%~dp0.venv\Scripts\python.exe" set "PATH=%~dp0.venv\Scripts;%PATH%"
+if defined VIRTUAL_ENV (
+  set "PATH=%VIRTUAL_ENV%\Scripts;%PATH%"
+) else (
+  if exist "%~dp0.venv\Scripts\python.exe" set "PATH=%~dp0.venv\Scripts;%PATH%"
+)
 set PYTHONUTF8=1
 
 python -m compileall -q src tools

@@ -5,3 +5,9 @@ librosa>=0.11,<0.12
 requests>=2.32,<3
 pykakasi==2.3.0
 webrtcvad-wheels>=2.0.14,<3
+# Real CPU tensors/tokenizers are exercised; model inference stays mocked.
+# CI installs this Torch version from the official CPU index before this file.
+torch==2.9.0
+torchaudio==2.9.0
+openai-whisper==20250625
+stable-ts==2.19.1

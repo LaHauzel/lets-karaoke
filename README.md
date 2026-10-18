@@ -18,17 +18,19 @@
 - 提供对齐诊断、低置信度提示、锚点调整、历史版本和快速重新渲染。
 - 字幕可按显示行分别调整画面位置，并自定义行数、字体、字号与高亮颜色；样式可在所选视频的任意帧实时预览。
 - 自动验收歌词完整性、整句闪行和字词时间结构，有限重试孤立疑难句；批量结果会汇总需处理与建议复核数量，支持可折叠波形、拖动句首句尾和循环试听。
-- 输出增强 LRC、SRT、ASS，并可使用 FFmpeg 将字幕烧录到视频。
+- 输出增强 LRC、SRT、ASS；视频可选择烧录硬字幕 MP4，或保留原画面并内封 ASS 字幕轨的 MKV。微调导出也可切换，默认沿用当前版本。
 - 对长演唱会视频按音量下降和音色结构变化生成候选边界。
 - 在音量轴和时间表中试听、定位、拖动边界、将最近的边界吸附到当前时间、拆分片段、合并相邻片段和修改时间。
 - 按分析记录保存多个灵敏度版本，并将选中的片段批量导出为 MKV 或 MP4。
 - 切割导出片段可一键导入卡拉 OK 字幕工作区继续处理。
-- 媒体任务和模型推理在本机运行；两个工作台标签共用一个本地后台服务。
+- 媒体任务和模型推理在本机运行；三个工作台标签共用一个本地后台服务。
 - 统一深色制作工作台、青绿主操作与琥珀提示，提供分组步骤、清晰空状态、响应式布局、可见键盘焦点和减少动效支持。
 - 字幕生成和微调进入同一持久队列；刷新网页后可恢复进度，后台重启后自动恢复未开始任务，并可重新运行中断任务。微调支持进度与取消，暂存对齐保存在本机。
 - 演唱会导出逐片登记；取消或中断后保留已完成片段，可继续导出剩余片段。
 
 ## 当前限制
+
+网页的“生成与复核 → 字幕输出方式”可选择格式，默认是烧录硬字幕 MP4；“人工微调对齐 → 本次导出”可继承当前版本或切换格式。内封 MKV 的字幕可以关闭，网页预览可能不显示 ASS 效果，需下载后使用支持 ASS 的播放器。命令行使用 `--output-mode burn` 或 `--output-mode soft`。切换格式不会重新对齐，但烧录画面需要重新编码。
 
 - 演唱会分段使用音量与音色变化生成候选边界，YAMNet/WebRTC VAD 辅助标记疑似讲话；不识别歌名。候选点不是歌曲数量，分类分数也不是经现场数据校准的概率。
 - 掌声、主持、持续伴奏、歌曲内部停顿和串烧可能造成误切或漏切，请在导出前试听并调整时间表。
@@ -133,12 +135,15 @@ python src\webui.py --port 8000 --no-open
 - `--no-warmup`：跳过启动时的模型预热。
 - `--device`：推理设备，默认 `cuda`。
 
-工作台包含两个独立标签：
+工作台包含三个独立标签：
 
 - **卡拉 OK 字幕**：音频/视频、歌词、对齐、诊断、人工调整和字幕渲染；也可通过 `/karaoke` 访问。
 - **演唱会切割**：长视频分析、音量/音色边界建议，并结合 YAMNet 与 WebRTC VAD 标记疑似讲话/MC 区间供试听复核；支持分段编辑和导出。讲话标记不会自动剪切，仍可能误报；可通过 `/#concert` 或 `/concert` 访问。
+- **成品与人工复核**：查看成品与对齐置信度，保存歌曲审批、备注、问题行与时间点，比较新旧版本并打开文件所在目录；可通过 `/#review` 或 `/review` 访问。
 
-两个标签共享本地服务，但页面状态彼此独立。不要同时启动多个 WebUI 实例。
+三个标签共享本地服务，但页面状态彼此独立。不要同时启动多个 WebUI 实例。
+
+三个页面使用同一套深色主题和「切割整场 → 制作字幕 → 成品复核」流程栏。切换标签保留当前编辑区；切割后可导入字幕制作，生成后可打开对应成品版本，复核详情可返回源演唱会的位置。
 
 ## 卡拉 OK 字幕流程
 
@@ -201,7 +206,17 @@ python src\webui.py --port 8000 --no-open
 test.bat
 ```
 
-该脚本会编译 `src/` 和 `tools/`，运行离线对齐、历史版本、HTTP、队列恢复、演唱会切割和前端状态机回归。离线依赖见 `requirements-test.txt`；前端测试需要 Node.js 22，没有 Node 时会明确跳过，CI 会强制安装并运行。完整 GPU 测试需要模型，不包含在默认单元测试中。
+该脚本优先使用已激活的虚拟环境，否则使用项目 `.venv`，并编译 `src/` 和 `tools/`，运行离线对齐、历史版本、HTTP、队列恢复、演唱会切割以及所有 `tests/*_test.js` 前端回归。前端测试需要 Node.js 22，缺少时会失败，避免漏测。完整 GPU 测试需要模型，不包含在默认单元测试中。
+
+在干净的 Python 3.11 虚拟环境中，按与 CI 相同的步骤安装测试依赖（另需系统 FFmpeg/FFprobe）：
+
+```powershell
+python -m pip install torch==2.9.0 torchaudio==2.9.0 --index-url https://download.pytorch.org/whl/cpu
+python -m pip install -r requirements-test.txt
+python -m pip check
+```
+
+CPU wheel 使用 [PyTorch 官方安装源](https://pytorch.org/get-started/previous-versions/#v290)。测试保留真实的 Torch 张量和 Whisper 分词／音频预处理依赖，推理使用测试替身，不下载模型权重，也不读取个人媒体。
 
 GPU 环境下可以分别验证中文、英文和日文的带歌词流程。测试会覆盖纯文本歌词以及带行时间戳的 LRC：
 
@@ -237,7 +252,12 @@ src/
   concert_splitter.py   音频特征提取、边界建议和 FFmpeg 导出
   concert_web.py        演唱会任务、版本和历史记录接口
   lyrics_search.py      可选 LRCLIB 歌词查询、缓存和请求边界
-  webui_assets/         卡拉 OK 与演唱会标签的前端资源
+  review_web.py         成品库与人工复核标签的本地 HTTP 接口
+  review_catalog.py     成品、修订版本和置信度清单
+  review_native.py      自动纳入普通字幕流程生成的成品与修订版本
+  review_store.py       人工审批、备注、问题时间点的原子保存与冲突保护
+  revision_policy.py    裁剪时间轴校验、缓存指纹与边界风险提示
+  webui_assets/         卡拉 OK、演唱会与人工复核标签的前端资源
 tests/                   单元测试和 HTTP 回归测试
 data/synth/              合成测试素材和清单
 tools/SOFA/              可选的 SOFA 歌声对齐后端
@@ -245,6 +265,53 @@ docs/                    依赖许可证和发布说明
 models/                  本地模型缓存（不提交）
 out/                     本地历史记录和导出结果（不提交）
 ```
+
+## 成品与人工复核
+
+启动工作台后选择「成品与人工复核」，或打开 `http://127.0.0.1:7870/#review`。支持按演唱会、置信度、视频类型和人工状态筛选；可预览 MP4、定位 Windows 文件、记录问题行／时间点和备注，保存为本地 JSON。
+
+点击「修改原文字幕」可继续编辑项目版本。批量成品有对应的 `exports/workflow-links.json` 时，会根据所选版本的对齐数据建立独立修改工作区；预览复用同时间轴的原文带人声版，保留原始交付和审批。新生成的版本会进入成品库，需单独复核。该入口编辑原文及时间轴，双语译文仍通过各批次的翻译记录维护。
+
+普通字幕流程生成的 `out/webui/` 成品会自动进入此标签；缺少独立模型评分时显示「未评分」，不会臆测置信度。额外的批量成品清单读取 `out/concert-collection/exports/track-manifest.json`，修订清单读取 `exports/revisions/manifest.json`。没有清单时显示空库。审批单独保存在 `out/concert-collection/human-reviews.json`，不随导出覆盖；每次保存保留 `.bak`，并通过跨进程锁和版本号防止多页面覆盖。审批绑定具体文件及其签名；替换片源或修订字幕后，新版本需要再次复核，旧版通过记录仍保留。所有数据只在本机处理，不自动上传或投稿。
+
+## 批量自动修复既有时间轴
+
+`src/repair_alignment.py` 可复用于演唱会批量任务。输入每首歌的 `align.json`、`alignment_evidence.json`、`input_lyrics.json` 和 `in/audio_44k.wav`；已有 `in/vg/vocals.wav` 时会复用分离人声。输出必须使用独立目录：
+
+在已激活项目环境的仓库根目录执行，一条命令完成修复、短片对照、合格版本导出和成品库登记：
+
+```powershell
+python src/repair_batch.py --jobs-root out/my-concert/jobs --repair-root out/my-concert/repair-r1 --catalog-root out/concert-collection/exports --project my-concert --translation-cache out/my-concert/translation-cache.json
+```
+
+也可以按阶段执行，先只查看候选和报告：
+
+```powershell
+python src/repair_alignment.py --jobs-root out/my-concert/jobs --output-root out/my-concert/repair --models large-v3 medium
+python src/repair_report.py out/my-concert/repair out/concert-collection/exports/repair-runs/my-concert --catalog-root out/concert-collection/exports --project my-concert
+```
+
+报告链接默认使用当前网页的主机和端口，WebUI 改用其他端口也能返回对应工作台。直接通过 `file://` 打开离线报告时，可在上述批处理或报告命令追加 `--workspace-url http://localhost:8000/`，指定已启动的工作台；部署在路径前缀下也可使用 `--workspace-url /studio/`。
+
+通过时间结构门槛的候选可继续导出；未通过的仍可制作短片复核。以下命令复用已有伴奏和译文，不重新分离或调用翻译服务：
+
+```powershell
+python src/repair_delivery.py out/my-concert/repair out/concert-collection/exports/revisions/my-repair --translation-cache out/my-concert/translation-cache.json --baseline-exports out/concert-collection/exports/my-concert --catalog-root out/concert-collection/exports --project my-concert --revision my-repair
+python src/repair_previews.py out/my-concert/repair out/concert-collection/exports/repair-runs/my-concert
+# 生成短片后再运行 repair_report.py，即可在报告内查看修复前后对照。
+```
+
+默认导出两种字幕布局 × 两种音轨的 ASS 轨 MKV 与硬字幕 MP4；可用 `--formats soft` 或 `--formats hard` 限定格式。没有提供翻译缓存时仅输出原文两种音轨，日语译文缺失会停止该曲导出，英语保持原文。相同字幕与音频按指纹续跑，伴奏视频复制已编码的画面；新版本注册到成品库后仍为待人工复核状态。
+
+流程先检查所有行的短句、长句、句内空档、字词映射和模型分歧，再做不带歌词提示的转写。转写仅使用参考歌词包含的语言；混合语言窗口会检查两种语言，避免依赖错误的旧时间轴。默认用 medium 连续转写、large-v3 与 medium 比较局部对齐，复用已有的大模型转写和可用声源；`--models` 从较大到较小排列，最后一个用于连续转写。候选必须保留文本、满足时间顺序并有转写锚点或额外交叉依据，才会替换独立候选中的对应行。已有成品和人工审批不会被改写。
+
+每次声学计算按音频身份、模型、语言、歌词、时间范围和参数缓存，重新执行可续跑；不会重复人声分离。输出包含候选 ASS/SRT、完整前后对照和未解决问题；报告中的 `review-queue.json` 按现场歌词结构、时间轴阻断、长音与空档列出复核事项，附实际歌词和歌曲内时间。每首最多制作两组修改前后片段，优先覆盖已修问题和未解决的高风险段落。`render_gate` 同时检查原始时间轴与实际显示片段：长空档若已拆开并显示圆点，仅保留试听提示；闪句、重叠、超长拖字和歌词结构疑点仍阻断整曲多版本导出。通过门槛不是人工通过，也不是投稿许可。转写未覆盖的歌词、现场重复次数和新增口号会留给人工复核，不自动删改参考歌词。
+
+可用 `--only 1 8 12` 限定编号，或 `--anchors-root <目录>` 提供逐曲 JSON 锚点（文件名为 `<曲目目录名>.json`，记录含一基 `row`、对应 `text`、歌曲内秒数 `start/end`）。人工锚点必须与当前版本一致；冲突会停止，不能用它掩盖缺词。实际对齐精度仍需对照声音验收。
+
+批处理按歌曲启动独立进程，曲目之间完整释放 CUDA 状态。默认连续 180 秒没有新计算进度时终止该工作进程并利用缓存重试一次；仍失败会记录并继续其他歌曲。CPU 慢机器可用 `--idle-timeout` 增大时限。超时和最终失败均保存在本地记录中，不会被算作修复成功。
+
+若本次仍有歌曲对齐失败，已完成候选和旧成片均保留，但批处理会返回非零退出码并停止下游发布，防止把旧候选当作本次成功结果。修复失败原因后可续跑；`--only` 同时限制声学处理、预览与视频导出范围。
 
 ## 许可证与第三方组件
 
