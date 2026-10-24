@@ -64,6 +64,18 @@ class RepairBatchTests(unittest.TestCase):
                 self.assertEqual(command[command.index('--tracks') + 1], '02_Sample')
                 self.assertNotIn('01_Sample', command)
             self.assertIn('http://localhost:9001/', stage.call_args_list[-1].args[0])
+            delivery = stage.call_args_list[1].args[0]
+            self.assertEqual(delivery[delivery.index('--soft-layout') + 1], 'multitrack')
+
+    def test_soft_layout_is_forwarded_to_delivery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output, argv = self.setup_run(Path(tmp))
+            with patch.object(sys, 'argv', argv + ['--soft-layout', 'separate']), \
+                    patch('repair_batch.run_worker'), patch('repair_batch.subprocess.run') as stage, \
+                    contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(repair_batch.main(), 0)
+            delivery = stage.call_args_list[1].args[0]
+            self.assertEqual(delivery[delivery.index('--soft-layout') + 1], 'separate')
 
 
 if __name__ == '__main__':

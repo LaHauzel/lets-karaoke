@@ -12,11 +12,21 @@ const fullFiles = track => [...track.files, ...track.supporting, ...(track.exper
 const availableFiles = track => track.files.filter(f=>f.exists);
 const isCandidate = track => track.grade==='high' && track.human_review.status!=='needs_changes' && !track.human_review.stale && !track.human_review.new_version && track.files.some(f=>f.kind==='reviewed' && f.variant===3 && f.exists);
 const isMP4 = file => file?.name.toLowerCase().endsWith('.mp4');
+const distinctFiles = files => [...new Map(files.map(f=>[f.path,f])).values()];
+function trackSelection(file) {
+  const m=file.multitrack;
+  return m?`音轨 ${m.audio+1}（${m.audio===0?'原唱':'伴奏'}）＋字幕轨 ${m.subtitle+1}（${m.subtitle===0?'原文':'双语'}）`:'';
+}
+function approvalScope(track,file) {
+  const r=track.human_review;
+  if(r.status==='passed'&&r.file_id!==file.id)return '（针对另一个版本，当前选择未确认）';
+  return r.new_version?'（有新修订版，待复核）':r.stale?'（视频已变化，待重新复核）':'';
+}
 function fileLabel(file) {
   if(file.native_version!==undefined)return `项目版本 ${file.native_version} · ${file.name}`;
   if(file.kind==='experiment') return `${file.label} · 实验片段`;
   const v=library.variants[file.variant];
-  return v?`${file.revision?'新修订 · ':file.previous_release?'历史版 · ':''}V${file.variant} ${v} · ${kindNames[file.kind]}${file.superseded?'（已有修订版）':file.older_translation?'（修订前译文）':''}`:file.name;
+  return v?`${file.retained_for_review?'审批关联原片 · ':file.previous_release?'历史版 · ':file.revision?'新修订 · ':''}V${file.variant} ${v} · ${file.multitrack?'多轨 MKV · '+trackSelection(file):kindNames[file.kind]}${file.superseded?'（已有修订版）':file.older_translation?'（修订前译文）':''}`:file.name;
 }
 function toast(message, failure=false) {
   clearTimeout(toastTimer);$('toast').textContent=message;$('toast').classList.toggle('failure',failure);$('toast').hidden=false;
@@ -58,7 +68,7 @@ function renderTracks() {
   $('resultCount').textContent=`显示 ${tracks.length} / ${library.tracks.length} 首`;
   $('empty').hidden=tracks.length>0;
   $('trackRows').innerHTML=tracks.map(t=>{
-    const files=availableFiles(t), hard=files.filter(isMP4).length, soft=files.filter(f=>f.kind==='soft').length;
+    const files=distinctFiles(availableFiles(t)), hard=files.filter(isMP4).length, soft=files.filter(f=>f.kind==='soft').length;
     return `<tr><td><button class="song-button" data-track="${esc(t.id)}"><span class="song-number">${esc(t.number)}</span>${esc(t.title)}</button><div class="song-sub">${esc(t.concert)}</div>${humanReviewSummary(t)}</td>
     <td>${badge(t.grade)}<span class="score-sub">中位分 ${t.score===null?'—':Number(t.score).toFixed(3)}</span></td>
     <td class="number">${t.high_rows.length} <span class="muted">/ ${t.total}</span><div class="meter" aria-hidden="true"><i style="width:${Math.round(t.high_rows.length/Math.max(1,t.total)*100)}%"></i></div></td>
@@ -84,8 +94,8 @@ async function load() {
     const summary=library.summary;
     $('totalCount').textContent=summary.tracks;$('recommendedCount').textContent=library.tracks.filter(isCandidate).length;
     $('hardCount').textContent=summary.hard;$('softCount').textContent=summary.soft;
-    const feedbackCount=library.tracks.flatMap(t=>t.files).filter(f=>f.exists&&f.kind==='updated').length;
-    $('hardNote').textContent=feedbackCount?`本轮反馈修订 ${feedbackCount} 个`:'可直接预览';
+    const feedbackCount=library.tracks.flatMap(t=>t.files).filter(f=>f.exists&&f.kind==='updated'&&!f.previous_release).length;
+    $('hardNote').textContent=feedbackCount?`当前修订 ${feedbackCount} 个`:'可直接预览';
     $('chipAll').textContent=summary.tracks;$('chipHigh').textContent=summary.grades.high||0;
     $('chipMedium').textContent=summary.grades.medium||0;$('chipLow').textContent=(summary.grades.low||0)+(summary.grades.fix||0);
     $('updated').textContent='清单更新 '+new Date(library.updated).toLocaleString('zh-CN',{timeZone:'Asia/Shanghai',hour12:false});
@@ -106,16 +116,17 @@ async function load() {
 function renderEvidence() {
   if(!selectedTrack)return;
   const t=selectedTrack;
-  const quality=selectedFile?.revision?t:(t.baseline_quality||t);
-  const acceptance=selectedFile?.revision?t.acceptance:(t.baseline_acceptance||t.acceptance);
-  const riskRows=new Set([...quality.low_rows,...acceptance.issues.flatMap(i=>i.rows||[])]);
+  const release=revisionForFile(t,selectedFile);
+  const acceptance=release?(release.acceptance||{issues:[]}):(t.baseline_acceptance||t.acceptance);
   let rows=evidenceForFile(t,selectedFile);
+  const lowRows=release?rows.filter(r=>(r.score??0)<.6||(r.disagreement??0)>2).map(r=>r.row):(t.baseline_quality||t).low_rows;
+  const riskRows=new Set([...lowRows,...acceptance.issues.flatMap(i=>i.rows||[])]);
   if($('onlyRisk').checked)rows=rows.filter(r=>riskRows.has(r.row)||r.disagreement===null||r.disagreement>1||r.priority==='重点复核');
   const seekable=isMP4(selectedFile);
   $('evidenceRows').innerHTML=rows.map(r=>`<tr><td class="evidence-lyric"><span class="lyric-text" lang="und">${r.text?esc(r.text):'<span class="muted">此版本暂无歌词文本</span>'}</span><span class="score-sub">第 ${r.row} 行</span></td><td><button class="seek" data-seek="${r.start}" ${!seekable?'disabled':''} aria-label="跳到第 ${r.row} 行 ${time(r.start)}">${time(r.start)}–${time(r.end)}</button></td><td class="number">${r.score===null?'缺失':r.score.toFixed(3)}</td><td class="number ${r.disagreement>1?'risk-count':''}">${r.disagreement===null?'缺失':r.disagreement.toFixed(2)+' 秒'}</td><td>${esc(r.priority)}${r.reasons?`<span class="score-sub">${esc(r.reasons)}</span>`:''}<button class="text-button add-row-issue" data-issue-row="${r.row}">记录此行问题</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">此筛选下没有记录；可取消“只看待复核行”查看全部。</td></tr>';
 }
 function renderFileList(files) {
-  return files.map(f=>`<div class="file-row"><div><strong>${esc(fileLabel(f))}</strong>${f.superseded?'<span class="pill old">旧译文</span>':''}<small>${esc(f.name)} · ${f.exists?size(f.bytes):'文件缺失'}${f.duration?' · '+time(f.duration):''}</small></div><div class="actions">${f.variant||f.kind==='experiment'||f.native_version!==undefined?`<button data-select="${esc(f.id)}" ${!f.exists?'disabled':''}>${isMP4(f)?'预览':'选择'}</button>`:`<a class="button" href="${esc(f.url)}" target="_blank" rel="noopener">查看文件 ↗</a>`}<button data-reveal="${esc(f.id)}" ${!f.exists?'disabled':''}>定位文件</button><button data-copy="${esc(f.id)}">复制路径</button></div></div>`).join('');
+  return files.map(f=>`<div class="file-row"><div><strong>${esc(fileLabel(f))}</strong>${f.superseded?'<span class="pill old">旧译文</span>':''}<small>${esc(f.name)} · ${f.exists?size(f.bytes):'文件缺失'}${f.multitrack?'（四种组合共用此文件）':''}${f.duration?' · '+time(f.duration):''}</small></div><div class="actions">${f.variant||f.kind==='experiment'||f.native_version!==undefined?`<button data-select="${esc(f.id)}" ${!f.exists?'disabled':''}>${isMP4(f)?'预览':'选择'}</button>`:`<a class="button" href="${esc(f.url)}" target="_blank" rel="noopener">查看文件 ↗</a>`}<button data-reveal="${esc(f.id)}" ${!f.exists?'disabled':''}>定位文件</button><button data-copy="${esc(f.id)}">复制路径</button></div></div>`).join('');
 }
 function openTrack(id, fileId) {
   const t=library.tracks.find(t=>t.id===id);if(!t)return;
@@ -130,7 +141,7 @@ function openTrack(id, fileId) {
   $('repairStatus').hidden=!t.repair;
   if(t.repair){
     const r=t.repair;
-    $('repairStatus').innerHTML=`<strong>自动修复候选</strong><p>已修改 ${r.changed} 行；剩余阻断 ${r.blocking} 行、超长或断档 ${r.duration} 行。${r.render_gate?'时间结构门槛通过，仍需听看。':'暂缓整曲成片，请先处理剩余异常。'} 人工审批保持不变。</p><a href="${esc(r.asset.url)}#${esc(r.anchor)}" target="_blank" rel="noopener">查看歌词与修复前后时间 ↗</a>`;
+    $('repairStatus').innerHTML=`<strong>${r.previous_revision?'此前自动修复记录':'自动修复候选'}</strong><p>该次实验修改 ${r.changed} 行；剩余阻断 ${r.blocking} 行、超长或断档 ${r.duration} 行。${r.render_gate?'该次时间结构检查通过，仍需听看。':'该次未通过整曲导出检查。'} 人工审批保持不变。</p><a href="${esc(r.asset.url)}#${esc(r.anchor)}" target="_blank" rel="noopener">查看歌词与修复前后时间 ↗</a>`;
   }
   $('structureStatus').textContent=`时间结构检查：${t.health.ok===true?'未发现已知阻断问题':t.health.ok===false?'有问题待修复':'尚无检查记录'}。伴奏版本仍需试听分离效果。`;
   $('riskDetails').innerHTML=`<p>较低置信行：${esc(t.low_rows.join('、')||'无')}</p><p>旧版译文自动风险行：${esc(t.translation_flags.join('、')||'未标记')}（未标记不代表无误译）</p><ul>${t.acceptance.issues.map(i=>`<li>${esc(i.message)}${i.rows?.length?'；第 '+esc(i.rows.join('、'))+' 行':''}</li>`).join('')}</ul>`;
@@ -140,7 +151,7 @@ function openTrack(id, fileId) {
     const files=media.filter(f=>f.kind===kind);
     return files.length?`<optgroup label="${esc(kindNames[kind])}">${files.map(f=>`<option value="${esc(f.id)}" ${!f.exists?'disabled':''}>${esc(fileLabel(f))}${!f.exists?' · 文件缺失':''}</option>`).join('')}</optgroup>`:'';
   }).join('');
-  $('filesSummary').textContent=`所有完整歌曲视频 · ${t.files.filter(f=>f.exists).length} 个版本`;
+  $('filesSummary').textContent=`所有完整歌曲视频 · ${distinctFiles(t.files.filter(f=>f.exists)).length} 个文件 / ${t.files.filter(f=>f.exists).length} 种版本与组合`;
   $('allFiles').innerHTML=renderFileList(t.files);$('supportFiles').innerHTML=renderFileList(t.supporting);
   $('translationNotes').innerHTML=Object.keys(t.translation_notes).length?'<h4>译文修订说明</h4><ul>'+Object.entries(t.translation_notes).map(([row,note])=>`<li>第 ${esc(row)} 行：${esc(note)}</li>`).join('')+'</ul>':'';
   $('experimentSection').hidden=!t.experiment;
@@ -162,7 +173,7 @@ function selectFile(id, preservePosition=true) {
   const quality=file.revision?selectedTrack:(selectedTrack.baseline_quality||selectedTrack);
   const acceptance=file.revision?selectedTrack.acceptance:(selectedTrack.baseline_acceptance||selectedTrack.acceptance);
   const health=file.revision?selectedTrack.health:(selectedTrack.baseline_health||selectedTrack.health);
-  $('acceptanceStatus').textContent=`人工复核：${reviewNames[selectedTrack.human_review.status]}${selectedTrack.human_review.new_version?'（有新修订版，待复核）':selectedTrack.human_review.stale?'（视频已变化，待重新复核）':''}。当前版本自动验收：${acceptance.label}。`;
+  $('acceptanceStatus').textContent=`人工复核：${reviewNames[selectedTrack.human_review.status]}${approvalScope(selectedTrack,file)}。当前版本自动验收：${acceptance.label}。`;
   $('structureStatus').textContent=`当前版本时间结构：${acceptance.status==='needs_fix'||health.ok===false?'有问题待修复':health.ok===true?'未发现已知阻断问题':'尚无检查记录'}。伴奏版本仍需试听分离效果。`;
   const rowText=row=>evidenceForFile(selectedTrack,file).find(e=>e.row===row)?.text;
   const rowLabel=row=>`${rowText(row)||'暂无歌词'}（第 ${row} 行）`;
@@ -181,6 +192,8 @@ function selectFile(id, preservePosition=true) {
     player.src=file.url;
   }
   $('openVideo').hidden=!playable;$('openVideo').href=playable?file.url:'#';
+  $('trackSelectionHint').hidden=!file.multitrack;
+  $('trackSelectionHint').textContent=file.multitrack?`已选择 ${trackSelection(file)}。四种组合共用一个文件；请用支持 ASS 的本机播放器打开，并在播放器中选择上述音轨和字幕轨。文件默认是原唱＋原文；网页选择不会自动改变外部播放器的选轨。审批只对应所选组合。`:'';
   $('revealSelected').disabled=!file.exists;$('selectedPath').textContent=file.path;
   $('fileStatus').textContent=[file.kind==='experiment'?'实验片段 · 置信度表仍显示正式成品的证据':file.kind==='reviewed'?'最新中文修订版 · 完整歌曲':file.kind==='soft'?'完整歌曲 · 内封 ASS 字幕轨':'完整歌曲 · 已烧录字幕',
     file.superseded||file.older_translation?'此版本使用旧译文，双语投稿优先选择 reviewed MP4':'',size(file.bytes),file.duration?time(file.duration):''].filter(Boolean).join(' / ');

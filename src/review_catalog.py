@@ -17,6 +17,16 @@ def read_json(path, default):
     return json.loads(path.read_text(encoding='utf-8')) if path.is_file() else default
 
 
+def read_revision_history(path):
+    """Accept the versioned envelope and the early bare-list format."""
+    data = read_json(path, [])
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict) and data.get('schema_version') == 1 and isinstance(data.get('revisions'), list):
+        return data['revisions']
+    raise ValueError('历史修订清单格式不受支持')
+
+
 def grade(row):
     q = row['quality']
     total = max(1, q['total_rows'])
@@ -51,15 +61,62 @@ def build_catalog(root=ROOT, url_prefix=''):
     root = root.resolve()
     allowed = {}
     diagnostics = []
-    project_labels = dict(read_json(root / 'library-metadata.json', {}).get('projects', {}))
+    # Storage migration is an overlay: old manifests and approval identities
+    # stay intact, while unreferenced variants resolve to the shared archive.
+    from multitrack import signature, selection
+    archive_map = {}
+    try:
+        overlay = read_json(root / 'multitrack-manifest.json', {})
+    except (OSError, ValueError) as error:
+        diagnostics.append('多轨清单无法读取：' + str(error))
+        overlay = {}
+    if not isinstance(overlay, dict) or overlay.get('schema_version', 1) != 1:
+        diagnostics.append('多轨清单版本不受支持')
+        overlay = {}
+    for archive in overlay.get('archives', []):
+        if not isinstance(archive, dict) or 'file' not in archive or 'signature' not in archive \
+                or not isinstance(archive.get('originals'), list):
+            diagnostics.append('多轨清单条目缺少必要字段')
+            continue
+        destination = (root / archive['file']).resolve()
+        if not destination.is_relative_to(root):
+            raise ValueError('多轨归档路径超出成品库')
+        if not destination.is_file() or signature(destination) != archive['signature']:
+            diagnostics.append('多轨归档缺失或已改变：' + archive['file'])
+            continue
+        for original in archive['originals']:
+            if not isinstance(original, dict) or 'path' not in original or 'signature' not in original:
+                diagnostics.append('多轨清单原片条目缺少必要字段')
+                continue
+            source = (root / original['path']).resolve()
+            if not source.is_relative_to(root):
+                raise ValueError('多轨原片路径超出成品库')
+            if source.is_file() and signature(source) != original['signature']:
+                continue  # A later export superseded this storage migration.
+            archive_map[source] = (destination, original)
+    retained = []
+    metadata = read_json(root / 'library-metadata.json', {})
+    project_labels = dict(metadata.get('projects', {}))
+    report = (root / (metadata.get('revision_report') or 'revisions/index.html')).resolve()
+    if not report.is_relative_to(root):
+        diagnostics.append('修订报告路径超出成品库')
+        report = root / 'revisions/index.html'
 
-    def asset(raw, kind, variant=None, **extra):
+    def asset(raw, kind, variant=None, _archive=True, **extra):
         p = Path(raw)
         p = (p if p.is_absolute() else root / p).resolve()
         if not p.is_relative_to(root):
             raise ValueError('Manifest asset is outside exports')
+        if _archive and p in archive_map:
+            destination, original = archive_map[p]
+            if original.get('keep'):
+                retained.append(asset(p, kind, variant, _archive=False,
+                                      **{**extra, 'previous_release': True, 'retained_for_review': True}))
+            p = destination
+            extra['multitrack'] = selection(variant)
         relative = p.relative_to(root).as_posix()
-        asset_id = hashlib.sha256(relative.encode('utf-8')).hexdigest()[:24]
+        identity = relative + (f'|selection:{variant}' if extra.get('multitrack') else '')
+        asset_id = hashlib.sha256(identity.encode('utf-8')).hexdigest()[:24]
         exists = p.is_file()
         stat = p.stat() if exists else None
         result = dict(id=asset_id, path=str(p), url=url_prefix+'/' + quote(relative, safe='/'),
@@ -71,6 +128,10 @@ def build_catalog(root=ROOT, url_prefix=''):
         else:
             diagnostics.append('文件缺失：' + relative)
         return result
+
+    def video_asset(value, kind, **extra):
+        return asset(value['file'], kind, value['variant'], duration=value['duration'],
+                     **({**extra, 'multitrack': value['multitrack']} if value.get('multitrack') else extra))
 
     evidence = defaultdict(list)
     csv_path = root / 'confidence-details.csv'
@@ -88,6 +149,17 @@ def build_catalog(root=ROOT, url_prefix=''):
     reviewed = {(r['project'], r['track']): r for r in read_json(root / 'reviewed-samples/manifest.json', [])}
     ab = {(r['project'], r['track']): r for r in read_json(root / 'model-comparison/manifest.json', {}).get('cases', [])}
     revisions = {(r['project'], r['track']): r for r in read_json(root / 'revisions/manifest.json', [])}
+    revision_history = defaultdict(dict)
+    try:
+        history = read_revision_history(root / 'revisions/history.json')
+    except (OSError, ValueError):
+        diagnostics.append('历史修订清单无法读取')
+        history = []
+    for historical in history:
+        if not isinstance(historical, dict) or not {'project', 'track', 'revision'} <= set(historical):
+            diagnostics.append('历史修订条目缺少必要字段')
+            continue
+        revision_history[(historical['project'], historical['track'])][historical['revision']] = historical
     repairs = {(r['project'], r['track']): r for r in read_json(root / 'repair-runs/manifest.json', [])}
     audit = read_json(root / 'revisions/audit.json', {})
     tracks = []
@@ -99,16 +171,27 @@ def build_catalog(root=ROOT, url_prefix=''):
                                 high_rows=q['higher_confidence_rows'],low_rows=q['lower_confidence_rows'],
                                 grade=grade(row))
         files = []
+        retained.clear()
         review = reviewed.get(key)
         for v in (review or {}).get('files', []):
-            files.append(asset(v['file'], 'reviewed', v['variant'], duration=v['duration']))
+            files.append(video_asset(v, 'reviewed'))
         for v in hard.get(key, {}).get('variants', []):
-            files.append(asset(v['file'], 'hard', v['variant'], duration=v['duration'],
+            files.append(video_asset(v, 'hard',
                                superseded=bool(review and v['variant'] in (3, 4))))
         for v in row['variants']:
-            files.append(asset(v['file'], 'soft', v['variant'], duration=v['duration'],
+            files.append(video_asset(v, 'soft',
                                older_translation=bool(review and v['variant'] in (3, 4))))
         revision = revisions.get(key)
+        historical = [r for name,r in revision_history[key].items()
+                      if name != (revision or {}).get('revision')]
+        for old in historical:
+            revision_lyrics(old, root)
+            for v in old.get('files', []):
+                item = video_asset(v, 'updated' if str(v['file']).endswith('.mp4') else 'soft',
+                             revision=old['revision'],
+                             timeline_offset=old.get('timeline_offset', 0), previous_release=True)
+                if item['id'] not in {f['id'] for f in files}:
+                    files.append(item)
         acceptance = (revision or {}).get('acceptance', row['acceptance'])
         health = (revision or {}).get('health', row['health'])
         if revision:
@@ -126,9 +209,10 @@ def build_catalog(root=ROOT, url_prefix=''):
         if revision:
             for f in files:
                 f['previous_release'] = True
-            files[:0] = [asset(v['file'], 'updated' if str(v['file']).endswith('.mp4') else 'soft',
-                              v['variant'], duration=v['duration'], revision=revision['revision'],
+            files[:0] = [video_asset(v, 'updated' if str(v['file']).endswith('.mp4') else 'soft',
+                              revision=revision['revision'],
                               timeline_offset=revision.get('timeline_offset', 0)) for v in revision['files']]
+        files.extend(f for f in {f['id']: f for f in retained}.values() if f['id'] not in {v['id'] for v in files})
         base = root / row['project'] / row['track']
         supporting = [asset(base / n, 'subtitle' if n.endswith(('.ass', '.srt', '.lrc')) else 'report')
                       for n in ('normal.ass', 'normal.srt', 'bilingual.ass', 'bilingual.srt',
@@ -142,11 +226,13 @@ def build_catalog(root=ROOT, url_prefix=''):
                 if (folder / n).is_file():
                     supporting.insert(0, asset(folder / n, 'report' if n.endswith('.json') else 'subtitle', reviewed=True))
         if revision:
-            supporting[:0] = [asset(p, 'report' if str(p).endswith('.json') else 'subtitle')
+            supporting[:0] = [asset(p, 'report' if str(p).endswith(('.json', '.html')) else 'subtitle')
                               for p in revision.get('supporting', [])]
         repair = repairs.get(key)
         if repair:
             repair = {**repair, 'asset':asset(repair['report'],'report',label='自动修复逐行报告')}
+            current_supporting = {Path(p).resolve() for p in (revision or {}).get('supporting', [])}
+            repair['previous_revision'] = bool(revision) and Path(repair['report']).resolve() not in current_supporting
             supporting.insert(0,repair['asset'])
         experiment = None
         if key in ab:
@@ -175,15 +261,16 @@ def build_catalog(root=ROOT, url_prefix=''):
             baseline_quality=baseline_quality,
             reviewed_rows=(review or {}).get('translation_rows_reviewed', 0),
             translation_notes=(review or {}).get('remaining_notes', {}),
-            experiment=experiment, revision=revision, repair=repair, audit=audit.get('/'.join(key)),
+            experiment=experiment, revision=revision, revision_history=historical,
+            repair=repair, audit=audit.get('/'.join(key)),
             default_file=default['id'], duration=default['duration']))
 
-    media = [f for t in tracks for f in t['files'] if f['exists']]
+    media = list({f['path']: f for t in tracks for f in t['files'] if f['exists']}.values())
     experiments = [f for t in tracks if t['experiment'] for f in t['experiment']['files'] if f['exists']]
     return dict(
         updated=datetime.now(timezone(timedelta(hours=8))).isoformat(timespec='seconds'),
         root=str(root), projects=project_labels, variants=VARIANTS, tracks=tracks,
-        revision_report=(url_prefix+'/revisions/index.html') if (root/'revisions/index.html').is_file() else None,
+        revision_report=(url_prefix+'/'+quote(report.relative_to(root).as_posix(),safe='/')) if report.is_file() else None,
         summary=dict(tracks=len(tracks), grades=dict(Counter(t['grade'] for t in tracks)),
                      files=len(media), soft=sum(f['kind'] == 'soft' for f in media),
                      hard=sum(f['kind'] != 'soft' for f in media),

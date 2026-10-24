@@ -8,6 +8,7 @@
   <script src="/workflow.js" defer></script>
   <link rel="stylesheet" href="/review-assets/library.css">
   <link rel="stylesheet" href="/review-assets/human-review.css">
+  <script src="/review-assets/review-common.js" defer></script>
   <script src="/review-assets/human-review.js" defer></script>
   <script src="/review-assets/library.js" defer></script>
 </head>
@@ -61,6 +62,7 @@
         <div id="playerPlaceholder" class="player-placeholder"><div class="file-icon">MKV</div><h3>在本机播放器中查看</h3><p>浏览器无法完整显示 MKV 中的 ASS 卡拉 OK 效果。点击下方按钮，在资源管理器中选中文件后用支持 ASS 的播放器打开。</p></div>
         <label class="version-label">当前视频<select id="version" aria-label="选择视频版本"></select></label>
         <div id="fileStatus" class="file-status"></div>
+          <p id="trackSelectionHint" class="file-status" hidden></p>
         <div class="file-actions"><button id="revealSelected" class="primary">在资源管理器中显示</button><button id="copySelected">复制完整路径</button><a id="openVideo" class="button" target="_blank" rel="noopener">独立预览 ↗</a></div>
         <div id="selectedPath" class="path"></div>
         <div class="workflow-actions"><button id="editSelected">修改原文字幕 →</button><button id="sourceSelected">回到整场切割</button></div>

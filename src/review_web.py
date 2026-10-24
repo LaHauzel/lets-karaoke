@@ -14,7 +14,8 @@ NATIVE_ROOT = Path(__file__).resolve().parents[1]/'out/webui'
 REVIEWS = ReviewStore(ROOT.parent/'human-reviews.json')
 TOKEN = secrets.token_urlsafe(32)
 REVEAL_LOCK = threading.Lock()
-ASSET_NAMES = {'index.html', 'library.css', 'library.js', 'human-review.css', 'human-review.js'}
+ASSET_NAMES = {'index.html', 'library.css', 'library.js', 'human-review.css', 'human-review.js',
+               'review-common.js'}
 
 
 def catalog():

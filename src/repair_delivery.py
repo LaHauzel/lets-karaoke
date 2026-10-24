@@ -81,7 +81,9 @@ def bilingual_ass(lines,options,translations,width,height):
     return result
 
 
-def export_job(candidate,destination,translation_cache=None,baseline=None,formats=('soft','hard')):
+def export_job(candidate,destination,translation_cache=None,baseline=None,formats=('soft','hard'),soft_layout='multitrack'):
+    if soft_layout not in ('multitrack','separate'):
+        raise ValueError('soft_layout must be multitrack or separate')
     candidate=Path(candidate).resolve();destination=Path(destination).resolve()
     report=read(candidate/'repair-report.json',{});align=read(candidate/'align.json')
     evidence=read(candidate/'alignment_evidence.json',{}).get('lines',[])
@@ -126,6 +128,11 @@ def export_job(candidate,destination,translation_cache=None,baseline=None,format
         else:run(['-i',accompaniment,'-af','aresample=async=1:first_pts=0','-t',duration,'-c:a','aac','-b:a','256k',pending])
         pending.replace(encoded);atomic(destination/'audio-cache.json',dict(fingerprint=audio_id))
     records=[]
+    if 'soft' in formats and soft_layout=='multitrack' and 3 in subtitles:
+        from multitrack import export_archive
+        records.extend(export_archive(source,encoded,destination/'normal.ass',destination/'bilingual.ass',
+                                      destination/f'{candidate.name}__multitrack.mkv'))
+        formats=tuple(mode for mode in formats if mode!='soft')
     for number in subtitles:
         ass=destination/('normal.ass'if number==1 else'bilingual.ass')
         for mode in formats:
@@ -166,20 +173,34 @@ def export_job(candidate,destination,translation_cache=None,baseline=None,format
     atomic(destination/'delivery.json',result);return result
 
 
-def register(result,catalog,project,revision,source):
+def _history_rows(path):
+    data=read(path,[])
+    if isinstance(data,list):return data
+    if isinstance(data,dict)and data.get('schema_version')==1 and isinstance(data.get('revisions'),list):
+        return data['revisions']
+    raise ValueError('历史修订清单格式不受支持')
+
+
+def register(result,catalog,project,revision,source,*,media=None,source_start=None,source_path=None):
     catalog=Path(catalog).resolve();source=Path(source).resolve()
     if any(not Path(f['file']).resolve().is_relative_to(catalog)for f in result['files']):raise ValueError('成片必须位于成品库内')
+    out=(model_paths.ROOT/'out').resolve()
+    version=dict(align=Path(result['supporting'][0]).resolve().relative_to(out).as_posix(),
+                 media=Path(media or source/'in/source.mp4').resolve().relative_to(out).as_posix())
+    if source_start is not None:version['source_start']=source_start
+    if source_path is not None:version['source']=str(source_path)
     manifest=catalog/'revisions/manifest.json';manifest.parent.mkdir(parents=True,exist_ok=True)
     with FileLock(str(manifest)+'.lock'):
         rows=read(manifest,[]);old=[r for r in rows if(r['project'],r['track'])==(project,result['track'])]
         if old and old[0].get('revision')!=revision:
-            archive=catalog/'revisions/history.json';atomic(archive,read(archive,[])+old)
+            archive=catalog/'revisions/history.json'
+            atomic(archive,dict(schema_version=1,revisions=[*_history_rows(archive),*old]))
         rows=[r for r in rows if(r['project'],r['track'])!=(project,result['track'])]
         atomic(manifest,rows+[dict(**result,project=project,revision=revision)])
     linksfile=catalog/'workflow-links.json'
     with FileLock(str(linksfile)+'.lock'):
-        links=read(linksfile,{});link=links.setdefault(project+'/'+result['track'],{});out=model_paths.ROOT/'out'
-        link.setdefault('versions',{})[revision]=dict(align=Path(result['supporting'][0]).relative_to(out).as_posix(),media=(source/'in/source.mp4').relative_to(out).as_posix())
+        links=read(linksfile,{});link=links.setdefault(project+'/'+result['track'],{})
+        link.setdefault('versions',{})[revision]=version
         atomic(linksfile,links)
 
 
@@ -187,6 +208,8 @@ def main():
     p=argparse.ArgumentParser(description=__doc__);p.add_argument('repair_root',type=Path);p.add_argument('destination',type=Path)
     p.add_argument('--translation-cache',type=Path);p.add_argument('--baseline-exports',type=Path)
     p.add_argument('--formats',nargs='+',choices=['soft','hard'],default=['soft','hard'])
+    p.add_argument('--soft-layout',choices=['multitrack','separate'],default='multitrack',
+                   help='双语软字幕默认共用一个多轨 MKV；separate 保留旧的四文件格式')
     p.add_argument('--catalog-root',type=Path);p.add_argument('--project');p.add_argument('--revision')
     p.add_argument('--tracks',nargs='+',help='仅导出指定歌曲目录；未指定时处理全部候选')
     args=p.parse_args()
@@ -200,7 +223,7 @@ def main():
             report=refresh_gate(candidate)
             if not report.get('render_gate')or not report.get('changed_rows'):continue
             print('EXPORT',candidate.name,flush=True)
-            result=export_job(candidate,args.destination/candidate.name,args.translation_cache,args.baseline_exports/candidate.name if args.baseline_exports else None,args.formats)
+            result=export_job(candidate,args.destination/candidate.name,args.translation_cache,args.baseline_exports/candidate.name if args.baseline_exports else None,args.formats,args.soft_layout)
             if args.catalog_root and result:register(result,args.catalog_root,args.project,args.revision,report['source'])
         except Exception as error:
             failures.append(dict(track=candidate.name,error=str(error)))

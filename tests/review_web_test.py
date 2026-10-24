@@ -143,6 +143,40 @@ class ReviewWebTests(unittest.TestCase):
         data=requests.get(self.base+'/api/review/library',timeout=5).json()
         self.assertEqual(data['tracks'],[])
 
+    def test_library_can_link_the_latest_local_revision_report(self):
+        folder=self.root/'revisions/round-two';folder.mkdir(parents=True)
+        (folder/'index.html').write_text('latest')
+        metadata=self.root/'library-metadata.json'
+        metadata.write_text(json.dumps(dict(revision_report='revisions/round-two/index.html')))
+        catalog,_=build_catalog(self.root,url_prefix='/exports')
+        self.assertEqual(catalog['revision_report'],'/exports/revisions/round-two/index.html')
+        outside=self.root.parent/'private.html';outside.write_text('private')
+        metadata.write_text(json.dumps(dict(revision_report='../private.html')))
+        catalog,_=build_catalog(self.root)
+        self.assertIsNone(catalog['revision_report'])
+        self.assertTrue(catalog['diagnostics'])
+
+    def test_archived_revision_keeps_review_and_lyrics_bound_to_old_file(self):
+        folder=self.root/'revisions';folder.mkdir()
+        old=folder/'old.mp4';old.write_bytes(b'old')
+        new=folder/'new.mp4';new.write_bytes(b'new')
+        previous=dict(project='demo',track='01_Song',revision='r1',
+            files=[dict(file=str(old),variant=1,duration=10)],
+            evidence=[dict(row=1,start=1,end=3,text='Old release lyric',score=.8,disagreement=.1)])
+        current={**previous,'revision':'r2','files':[dict(file=str(new),variant=1,duration=8)]}
+        (folder/'manifest.json').write_text(json.dumps([previous]))
+        track=build_catalog(self.root)[0]['tracks'][0]
+        file=next(f for f in track['files'] if f.get('revision')=='r1')
+        self.store.save(track,dict(status='needs_changes',revision=0,file_id=file['id'],file_signature=file['signature']))
+        (folder/'manifest.json').write_text(json.dumps([current]))
+        (folder/'history.json').write_text(json.dumps([previous,previous]))
+        catalog,allowed=build_catalog(self.root);self.store.attach(catalog);track=catalog['tracks'][0]
+        self.assertEqual(sum(f.get('revision')=='r1' for f in track['files']),1)
+        self.assertIn(file['id'],allowed)
+        self.assertFalse(track['human_review']['stale'])
+        self.assertTrue(track['human_review']['new_version'])
+        self.assertEqual(track['revision_history'][0]['evidence'][0]['text'],'Old release lyric')
+
     def test_revision_acceptance_does_not_replace_historical_evidence(self):
         path=self.root/'track-manifest.json';rows=json.loads(path.read_text())
         rows[0]['acceptance']=dict(status='needs_fix',label='collapsed line',issues=[dict(rows=[1],message='too short')])

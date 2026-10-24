@@ -1,0 +1,21 @@
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const path=require('node:path');
+const source=fs.readFileSync(path.join(__dirname,'../src/webui_assets/library/library.js'),'utf8');
+const context=vm.createContext({document:{getElementById:()=>({})}});
+vm.runInContext(source.split("document.addEventListener('click'")[0],context);
+vm.runInContext("library={variants:{1:'原文 · 原唱',2:'原文 · 伴奏',3:'双语 · 原唱',4:'双语 · 伴奏'}}",context);
+const call=(name,...args)=>{context.args=args;return vm.runInContext(`${name}(...args)`,context);};
+const files=[1,2,3,4].map(v=>({id:`v${v}`,variant:v,path:'archive.mkv',name:'archive.mkv',kind:'soft',exists:true,bytes:1024,
+  multitrack:{audio:(v-1)%2,subtitle:Math.floor((v-1)/2)}}));
+assert.equal(call('distinctFiles',files).length,1);
+assert.equal(call('distinctFiles',[...files,{path:'approved.mkv'}]).length,2);
+assert.equal(call('trackSelection',files[3]),'音轨 2（伴奏）＋字幕轨 2（双语）');
+assert.ok(call('fileLabel',files[3]).includes('多轨 MKV'));
+assert.ok(call('fileLabel',{...files[0],multitrack:undefined,retained_for_review:true}).includes('审批关联原片'));
+assert.ok(call('renderFileList',files).includes('四种组合共用此文件'));
+assert.ok(call('approvalScope',{human_review:{status:'passed',file_id:'old'}},files[0]).includes('当前选择未确认'));
+assert.equal(call('approvalScope',{human_review:{status:'passed',file_id:'v1'}},files[0]),'');
+assert.ok(source.includes('网页选择不会自动改变外部播放器的选轨'));
+console.log('Multi-track UI: physical-file counts, combination labels and retained approval labels passed.');

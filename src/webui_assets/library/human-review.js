@@ -61,7 +61,10 @@ function markReviewDirty(){reviewEditor.dirty=true;$('reviewError').hidden=true;
 function evidenceForFile(track,file){
   if(!file)return [];
   if(Array.isArray(file.evidence))return file.evidence;
-  if(file.revision)return file.revision===track.revision?.revision?(track.revision.evidence||[]):[];
+  if(file.revision){
+    const revision=revisionForFile(track,file);
+    return revision?.evidence||[];
+  }
   return track.evidence||[];
 }
 function issueLyricContext(track,issue,source){

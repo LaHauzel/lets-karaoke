@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--only',nargs='+',type=int,help='只重新检查指定曲目编号，其余已完成候选和缓存保留')
     parser.add_argument('--idle-timeout',type=float,default=180,help='单次声学计算无进度超时秒数；CPU 慢机器可调高')
     parser.add_argument('--formats',nargs='+',choices=['soft','hard'],default=['soft','hard'])
+    parser.add_argument('--soft-layout',choices=['multitrack','separate'],default='multitrack',
+                        help='repair_delivery 软字幕布局：multitrack 多轨 MKV（默认）或 separate 四个独立 MKV')
     args=parser.parse_args()
     revision=args.revision or args.repair_root.name
     for value in (revision,args.project):
@@ -70,7 +72,8 @@ def main():
         tracks=[p.name for p in jobs]
         stage('previews','repair_previews.py',root,report,'--tracks',*tracks)
         stage('delivery','repair_delivery.py',root,delivery,'--catalog-root',catalog,'--project',args.project,
-              '--revision',revision,'--baseline-exports',catalog/args.project,'--formats',*args.formats,'--tracks',*tracks,
+              '--revision',revision,'--baseline-exports',catalog/args.project,'--formats',*args.formats,
+              '--soft-layout',args.soft_layout,'--tracks',*tracks,
               *(['--translation-cache',args.translation_cache]if args.translation_cache else[]))
         stage('report','repair_report.py',root,report,'--catalog-root',catalog,'--project',args.project,'--workspace-url',args.workspace_url)
         rows=read(report/'summary.json',[])

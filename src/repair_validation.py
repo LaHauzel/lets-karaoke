@@ -26,8 +26,10 @@ def validate_render(align,evidence,anchor_rows=()):
     reference=sorted({row for item in review_queue(dict(after=raw,anchor_rows=anchor_rows))
                       if item['kind']=='reference_structure'for row in item['rows']})
     acceptance=assess(align,[l['raw']for l in align['lines']],duration)
-    gate=not blocking and not long and not reference and health.get('ok') is True and acceptance['status']!='needs_fix'
+    unresolved=align.get('feedback',{}).get('unresolved_rows',[])
+    gate=not blocking and not long and not reference and not unresolved and health.get('ok') is True and acceptance['status']!='needs_fix'
     return dict(version=1,gate=gate,blocking_rows=sorted(blocking),duration_rows=sorted(long),
                 reference_rows=reference,split_rows=sorted(r for r,n in counts.items()if n>1),
+                unresolved_source_rows=[r['source_row']for r in unresolved],
                 details=details,health=health,
                 note='长空档若已拆成正常显示片段并显示圆点，仅保留听看提示；闪句、拖字、重叠和歌词结构疑点仍阻断整曲导出。')
