@@ -207,7 +207,18 @@ The test suite uses repository-generated synthetic audio and video and does not 
 test.bat
 ```
 
-The script compiles `src/` and `tools/`, then runs alignment, history, HTTP, and concert segmentation regression tests. Full GPU end-to-end tests require installed dependencies and prepared model weights and are not part of the default unit-test script.
+The script compiles `src/` and `tools/`, then runs alignment, history, HTTP, concert segmentation, delivery-review, multi-track muxing, and archive-migration regressions, including the Node frontend checks. Full GPU end-to-end tests require installed dependencies and prepared model weights and are not part of the default unit-test script.
+
+## Batch repair, multi-track delivery, and human review
+
+The newer production workflows are maintained in Chinese; the detailed references are [README.md](README.md), [multi-track storage](docs/multitrack-storage.md), and [feedback revisions](docs/feedback-revision.md). Summary:
+
+- `src\repair_batch.py` runs a resumable alignment repair per song from existing jobs, writes a portable before/after HTML report, and exports only candidates that pass the rendered-structure gate. `--soft-layout separate` keeps the old four-file soft-subtitle layout; the default merges the four combinations into one multi-track MKV.
+- `src\archive_library.py` plans (and with `--apply`, performs) lossless consolidation of an existing delivery library. It verifies packet content and millisecond timelines, never deletes media, and only writes `cleanup-candidates.json` for a later, manual cleanup.
+- `src\feedback_revision.py --align <align.json> --decisions <decisions.json> --output <dir>` applies version-bound human decisions (omissions, measured replacements, quarantine, trims) and writes a separate revised alignment plus its feedback record. Quarantined rows keep blocking a whole-song export.
+- The `/review` workspace lists deliveries, records approvals bound to a file signature, and resolves archived revision evidence and multi-track variants; old approvals remain bound to the original file.
+
+None of these steps approves a release or replaces listening to the result.
 
 ## Project layout
 
@@ -217,7 +228,12 @@ src/
   concert_splitter.py   acoustic features, boundary suggestions, FFmpeg export
   concert_web.py        concert jobs, versions, and history APIs
   lyrics_search.py      optional LRCLIB lookup, caching, and request limits
-  webui_assets/         karaoke and concert tab assets
+  review_*.py           delivery catalog, review storage/HTTP, native outputs, workflow links
+  repair_*.py           resumable alignment repair, reports, gated delivery, batch entry
+  multitrack.py         lossless multi-track MKV muxing and packet/timeline checks
+  archive_library.py    storage migration plans; never deletes originals
+  feedback_revision.py  version-bound review decisions and local CLI
+  webui_assets/         karaoke, concert, and review tab assets
 tests/                  unit and HTTP regression tests
 data/synth/             synthetic test media and manifests
 tools/SOFA/             optional singing alignment backend

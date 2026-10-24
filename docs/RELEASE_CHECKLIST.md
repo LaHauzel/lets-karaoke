@@ -13,6 +13,10 @@
 - [x] 直接依赖/模型许可边界、可选GPL组件已记录
 - [x] 修复提交 `7a95d6b` 的远端Windows/CPU/Node [Actions实际运行通过](https://github.com/LaHauzel/lets-karaoke/actions/runs/36881273100)：187项中186通过、1项可选YAMNet跳过；该项已本机通过
 - [x] 第二台Windows按README新建3.11 `.venv`，Whisper/concert安装检查与Whisper+Demucs GPU短片通过
+- [x] 2026-10-24 本机 Windows 11 / Python 3.11.9 离线回归 318 项全部通过，ASR 自检与全部 Node 前端回归通过；覆盖多轨 MKV 封装校验、存储迁移、反馈修订 CLI 与复核历史
+- [x] 2026-10-24 复核清单容错：损坏的多轨/历史清单显示诊断而非页面报错；迁移遇到版本不完整的歌曲会跳过并保留原文件；`repair_batch` 可透传 `--soft-layout`
+- [ ] 提交推送后在本仓库 GitHub Actions 上确认 Windows/CPU/Node 实际运行通过
+- [ ] 打源码发布标签（如 v0.1.0）并核对发布说明包含已知限制与不支持范围
 - [ ] 完整Qwen/SOFA环境在全新Windows按文档安装、模型下载和GPU短片测试通过
 - [ ] 有授权真实歌声及演唱会边界真值集达到发布质量目标
 - [ ] 正式二进制分发生成锁定环境依赖/许可证/NOTICE清单

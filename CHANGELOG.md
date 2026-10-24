@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- 新增多轨 MKV 交付：双语修复导出默认把四种软字幕组合合并为一个文件（两路音轨、两路 ASS 字幕轨）；`repair_delivery.py --soft-layout separate` 或 `repair_batch.py --soft-layout separate` 可恢复旧的四文件布局，直接调用旧脚本的流程需要注意默认值变化。
+- 新增 `archive_library.py` 成品库存储迁移：逐曲校验数据包内容与毫秒级时间轴，版本不完整的歌曲会跳过并写入 `migration-failures.json`（其他歌曲继续），全程不删除原片，只生成 `cleanup-candidates.json` 供人工清理；复核清单通过 `multitrack-manifest.json`（schema_version 1）按四种选轨身份展示同一文件。
+- 新增 `feedback_revision.py` 本地 CLI 与 [docs/feedback-revision.md](docs/feedback-revision.md)：版本绑定的删句、实测替换、隔离与裁切，输出独立修订版和 `feedback` 记录；被隔离的行继续阻断整曲导出，人工审批保持不变。
+- 复核工作台支持归档修订历史（`revisions/history.json`，schema_version 1）、多轨选轨提示与按物理文件去重统计；旧审批仍绑定原片，新修订版需要重新复核。
+- 鲁棒性：多轨清单或历史修订清单损坏时在复核页显示诊断而不是报错；`library-metadata.json` 的 `revision_report` 为空时回退默认报告路径；自动修复报告只有在不属于当前修订时才标记为历史。
+- 新增回归：真实 FFmpeg 多轨封装、数据包哈希与时间轴、迁移跳过与失败保留、反馈修订 CLI、复核清单容错、修订历史绑定，以及 Node 多轨/复核界面检查。
+- 新增 `AGENTS.md`，记录仓库结构、常用命令、测试与提交约定，供自动化协作使用。
+
 - **2026-10-02：** 统一字幕与演唱会工作台的深色舞台主题、青绿主操作和琥珀提示；优化导航、步骤层级、素材就绪提示、空预览、工具条、折叠说明和响应式布局，补充键盘焦点与减少动效支持。
 - 新增可选 LRCLIB 歌词检索，无需密钥：主动搜索歌名/艺人，按结果编号获取预览，再选择导入纯文本或 LRC。已有歌词须确认替换，文件切换与过期响应受保护，处理中禁止导入。
 - 替换确认直接显示在页面内；修复本地歌词文件异步读取覆盖新媒体、在线歌词或手动编辑的问题，以及窄屏视频预览溢出。
