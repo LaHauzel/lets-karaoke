@@ -144,7 +144,7 @@ The workspace has four independent tabs:
 - **Delivery review:** approved outputs, problem rows/time points, notes, and revision comparison. Direct routes: `/#review` and `/review`.
 - **Publish preparation:** local Bilibili/Douyin submission packages from approved videos; field preflight, cover/video generation and local submission records, without logging in or uploading. Direct routes: `/#publish` and `/publish`.
 
-The tabs share the local service but keep their page state separate, and the workflow bar follows cut → subtitles → review → publish. Do not run multiple WebUI instances at the same time.
+The tabs share the local service but keep their page state separate. The workflow bar is a read-only indicator (cut → subtitles → review → publish); switch workspaces with the top tabs. Do not run multiple WebUI instances at the same time.
 
 ## Karaoke subtitle workflow
 
