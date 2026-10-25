@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- 新增「发布准备」第四个工作台标签：从成品复核中已通过的成片生成 B站/抖音投稿包；支持原唱/伴奏、烧录字幕、封面时间、竖屏模糊背景、双平台完整字段、生成前预检、可取消后台生成、SHA-256 与本地投稿记录。不登录平台账号，不自动上传。
+- 投稿包保存在 `out/publish/`：`video.mp4`、`cover.jpg`、`publish.json`、`upload-info.txt`、`sha256.txt`；审批文件签名变化时拒绝生成，重复生成不会改动原成品。
+- 新增 `publish_export.py`、`publish_web.py` 与 `webui_assets/publish/`，并加入离线单元测试、HTTP 回归和 Node 前端检查。
+
 - 新增多轨 MKV 交付：双语修复导出默认把四种软字幕组合合并为一个文件（两路音轨、两路 ASS 字幕轨）；`repair_delivery.py --soft-layout separate` 或 `repair_batch.py --soft-layout separate` 可恢复旧的四文件布局，直接调用旧脚本的流程需要注意默认值变化。
 - 新增 `archive_library.py` 成品库存储迁移：逐曲校验数据包内容与毫秒级时间轴，版本不完整的歌曲会跳过并写入 `migration-failures.json`（其他歌曲继续），全程不删除原片，只生成 `cleanup-candidates.json` 供人工清理；复核清单通过 `multitrack-manifest.json`（schema_version 1）按四种选轨身份展示同一文件。
 - 新增 `feedback_revision.py` 本地 CLI 与 [docs/feedback-revision.md](docs/feedback-revision.md)：版本绑定的删句、实测替换、隔离与裁切，输出独立修订版和 `feedback` 记录；被隔离的行继续阻断整曲导出，人工审批保持不变。

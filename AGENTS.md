@@ -65,8 +65,10 @@ src/
   concert_sound_classifier.py, fetch_concert_model.py   optional YAMNet speech/music hints
   review_* and repair_*    catalog/store/workflow/native, repair pipeline/report/delivery
   revision_policy.py, feedback_revision.py, multitrack.py, archive_library.py
+  publish_export.py        platform-ready submission packages (FFmpeg, cover, publish.json, hashes)
+  publish_web.py           publish workspace routes, preflight and background generation
   process_runner.py, http_support.py, local_history.py, model_paths.py, whisper_compat.py
-  webui_assets/            all frontend HTML/CSS/JS (karaoke, concert, review/library)
+  webui_assets/            all frontend HTML/CSS/JS (karaoke, concert, review/library, publish)
 tests/                     offline unittest modules (*_test.py), Node tests (*_test.js), GPU e2e scripts
 data/synth/                checked-in synthetic audio + manifest used by tests
 tools/                     vendored optional backends (SOFA, llama-cpp binaries) + smoke helpers
@@ -78,8 +80,8 @@ Things are not a package: modules import each other as **top-level modules** (`i
 
 ## Architecture invariants
 
-- One local server process serves the three workspaces (`/karaoke` or `/`, `/concert`, `/review`); they share the job queue and local storage but keep independent page state. Do not start multiple WebUI instances.
-- Media processing, model inference, and storage are local. The only outbound calls are optional LRCLIB lyric search/preview (`src/lyrics_search.py`): fixed `https://lrclib.net`, TLS verification on, no proxy/redirects, no media paths or lyrics sent. Do not add other outbound requests or weaken these limits.
+- One local server process serves the four workspaces (`/karaoke` or `/`, `/concert`, `/review`, `/publish`); they share the job queue and local storage but keep independent page state. Do not start multiple WebUI instances.
+- Media processing, model inference, and storage are local. The only outbound calls are optional LRCLIB lyric search/preview (`src/lyrics_search.py`): fixed `https://lrclib.net`, TLS verification on, no proxy/redirects, no media paths or lyrics sent. Do not add other outbound requests or weaken these limits. Publish preparation (`/publish`) generates local packages only: it must not log in to a platform, store cookies, or upload automatically.
 - The server is unauthenticated and loopback-only by default; remote binding requires `--allow-remote` and should not be loosened.
 - Task state is persisted under `out/webui/<job>/`; concert records/exports under `out/concert/`, review data under `out/concert-collection/`. Generated state must stay out of git.
 - Subprocesses (FFmpeg, model workers) must go through the existing helpers (`process_runner.py`) so cancellation, deadlines, and Windows process-tree cleanup keep working.

@@ -23,7 +23,7 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 - Interactive waveform and time-table editing: seek, drag boundaries, snap the nearest boundary to the current time, split at the playhead, merge adjacent segments, and edit timestamps.
 - Multiple sensitivity versions per concert record, with batch export to MKV or MP4.
 - Import an exported concert segment into the karaoke subtitle workspace with one click.
-- One local backend service shared by the two independent WebUI tabs.
+- One local backend service shared by the four independent WebUI tabs.
 - A shared dark production workspace with teal primary actions, amber review hints, grouped steps, clear empty states, responsive layouts, visible keyboard focus, and reduced-motion support.
 - Generation and timeline edits share a durable processing queue, with progress recovery after page reload, automatic recovery of pending jobs after restart, explicit retries for interrupted jobs, cancellable edits, and local draft storage.
 - Concert export records completed clips incrementally and can resume remaining clips after cancellation or interruption.
@@ -137,12 +137,14 @@ Common options:
 - `--no-warmup`: skip model warmup at startup.
 - `--device`: inference device; defaults to `cuda`.
 
-The workspace has two independent tabs:
+The workspace has four independent tabs:
 
 - **Karaoke subtitles:** media input, lyrics, alignment, diagnostics, manual editing, and subtitle rendering. Direct route: `/karaoke`.
 - **Concert segmentation:** long-video analysis, boundary review, segment editing, and export. Direct routes: `/#concert` and `/concert`.
+- **Delivery review:** approved outputs, problem rows/time points, notes, and revision comparison. Direct routes: `/#review` and `/review`.
+- **Publish preparation:** local Bilibili/Douyin submission packages from approved videos; field preflight, cover/video generation and local submission records, without logging in or uploading. Direct routes: `/#publish` and `/publish`.
 
-The tabs share the local service but keep their page state separate. Do not run multiple WebUI instances at the same time.
+The tabs share the local service but keep their page state separate, and the workflow bar follows cut → subtitles → review → publish. Do not run multiple WebUI instances at the same time.
 
 ## Karaoke subtitle workflow
 
@@ -219,6 +221,16 @@ The newer production workflows are maintained in Chinese; the detailed reference
 - The `/review` workspace lists deliveries, records approvals bound to a file signature, and resolves archived revision evidence and multi-track variants; old approvals remain bound to the original file.
 
 None of these steps approves a release or replaces listening to the result.
+
+## Publish preparation (multi-platform packages)
+
+The fourth workspace tab, `/publish` (or `/publish` in the workspace), turns a human-approved video into a local submission package for Bilibili and Douyin. It never logs in, never uploads, and never changes the approved source:
+
+- Packages contain `video.mp4`, `cover.jpg`, `publish.json` (all platform fields, source approval and SHA-256), `upload-info.txt` for copy/paste, and `sha256.txt`, under `out/publish/`.
+- Only tracks approved in the review workspace, with a matching file signature, are eligible; options include original/accompaniment audio, burned or no subtitles, transcode or copy (MP4 sources), cover time, and a vertical blurred-background framing for Douyin.
+- Platform fields cover Bilibili (title, description, tags, partition tid, copyright/reprint, scheduled publish, 1146×717 cover) and Douyin (title, caption, topics, visibility, downloads, location, collection, mentions, scheduled publish, original claim, 1080×1440 cover).
+- A preflight checks approval signatures, audio/subtitle availability, field limits and platform video limits before any FFmpeg work; generation runs in a cancellable background job and can be marked as submitted locally.
+- Automatic upload is deliberately out of scope: Bilibili's official upload API requires an enterprise developer account (individual applications are not open), and Douyin follows its own open-platform approval process.
 
 ## Project layout
 
