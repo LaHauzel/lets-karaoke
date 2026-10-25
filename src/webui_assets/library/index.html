@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>成品与人工复核 · lets-karaoke</title>
+  <title>成品复核 · lets-karaoke</title>
   <link rel="stylesheet" href="/theme.css">
   <script src="/workflow.js" defer></script>
   <link rel="stylesheet" href="/review-assets/library.css">
@@ -24,7 +24,7 @@
   <nav class="lk-workflow" aria-label="制作流程" data-workflow="review"></nav>
   <section class="stats" aria-label="成品统计">
     <button class="stat" data-preset="all"><span>曲目总数</span><strong id="totalCount">—</strong><small>本地成品 · 按演唱会分组</small></button>
-    <button class="stat accent" data-preset="recommended"><span>首批投稿候选</span><strong id="recommendedCount">—</strong><small>较高置信度 + 修订双语 MP4</small></button>
+    <button class="stat accent" data-preset="recommended"><span>待复核高置信</span><strong id="recommendedCount">—</strong><small>较高置信度 + 修订双语 MP4；通过后才可发布</small></button>
     <button class="stat" data-preset="hard"><span>硬字幕 MP4</span><strong id="hardCount">—</strong><small id="hardNote">可在浏览器预览</small></button>
     <button class="stat" data-preset="soft"><span>ASS 字幕轨 MKV</span><strong id="softCount">—</strong><small>可切换字幕 · 在本机播放器查看</small></button>
   </section>
@@ -36,7 +36,7 @@
     <div class="toolbar">
       <label class="search"><span>⌕</span><input id="search" type="search" placeholder="搜索歌名、歌手或演唱会…" aria-label="搜索歌名、歌手或演唱会"></label>
       <label>演唱会<select id="project"><option value="">全部演唱会</option></select></label>
-      <label>成品类型<select id="availability"><option value="">全部成品</option><option value="recommended">首批投稿候选</option><option value="hard">有硬字幕 MP4</option><option value="reviewed">有修订双语版</option><option value="soft">有 ASS 字幕轨 MKV</option><option value="experiment">有模型对照试片</option></select></label>
+      <label>成品类型<select id="availability"><option value="">全部成品</option><option value="recommended">待复核高置信</option><option value="hard">有硬字幕 MP4</option><option value="soft">有 ASS 字幕轨 MKV</option><option value="reviewed">有修订双语版</option><option value="experiment">有模型对照试片</option></select></label>
       <label>人工复核<select id="reviewFilter"><option value="">全部状态</option><option value="unchecked">未检查</option><option value="passed">通过</option><option value="needs_changes">需要修改</option><option value="ready">通过的 MP4（投稿筛选）</option><option value="stale">新修订 / 视频变化，待复核</option></select></label>
       <label>排序<select id="sort"><option value="confidence">置信度从高到低</option><option value="risk">置信度从低到高</option><option value="order">演唱会曲目顺序</option><option value="title">歌名</option></select></label>
     </div>
@@ -65,7 +65,8 @@
           <p id="trackSelectionHint" class="file-status" hidden></p>
         <div class="file-actions"><button id="revealSelected" class="primary">在资源管理器中显示</button><button id="copySelected">复制完整路径</button><a id="openVideo" class="button" target="_blank" rel="noopener">独立预览 ↗</a></div>
         <div id="selectedPath" class="path"></div>
-        <div class="workflow-actions"><button id="editSelected">修改原文字幕 →</button><button id="sourceSelected">回到整场切割</button></div>
+        <div class="workflow-actions"><button id="editSelected">修改原文字幕 →</button><button id="publishSelected" class="primary">生成投稿包 →</button><button id="sourceSelected">回到整场切割</button></div>
+        <p id="publishHint" class="muted small"></p>
         <p id="workflowHint" class="muted small"></p>
         <p id="playbackError" class="error" hidden></p>
       </section>

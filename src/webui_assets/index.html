@@ -199,15 +199,15 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 <nav class="lk-workflow" aria-label="制作流程" data-workflow="karaoke"></nav>
 
 <nav class="workflow-strip" aria-label="制作流程">
-  <a href="#inputCard"><span>01</span><div><b>准备素材</b><small>媒体与歌词</small></div></a>
-  <a href="#styleCard"><span>02</span><div><b>设计字幕</b><small>样式与位置</small></div></a>
-  <a href="#generationCard"><span>03</span><div><b>生成与复核</b><small>时间轴与成片</small></div></a>
+  <a href="#inputCard"><div><b>准备素材</b><small>媒体与歌词</small></div></a>
+  <a href="#styleCard"><div><b>设计字幕</b><small>样式与位置</small></div></a>
+  <a href="#generationCard"><div><b>生成与预览</b><small>时间轴与成片</small></div></a>
 </nav>
 <div class="wrap">
   <!-- ================= 左栏 ================= -->
   <div>
     <div class="card history-card">
-      <details id="historyPanel"><summary>本地历史记录 <span id="historyCount"></span></summary>
+      <details id="historyPanel"><summary>任务历史 <span id="historyCount"></span></summary>
         <p class="hint">扫描项目 out 目录中的已保存任务和对齐结果。选择记录可恢复所有版本；缺少原任务配置的实验结果仅供查看。</p>
         <input id="historySearch" type="text" placeholder="按歌曲或目录搜索" aria-label="搜索历史记录">
         <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:7px">
@@ -221,7 +221,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </details>
     </div>
     <div class="card" id="inputCard">
-      <h2><span class="n">1</span>准备素材 <span class="card-caption">一首或多首，按顺序制作</span></h2>
+      <h2>准备素材 <span class="card-caption">一首或多首，按顺序制作</span></h2>
 
       <label class="fl">视频 / 音频（必填）</label>
       <div class="drop" id="dropMedia" tabindex="0" role="button" aria-label="选择音频或视频文件">
@@ -426,7 +426,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
 
     <div class="card" id="styleCard">
       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
-        <h2><span class="n">2</span>字幕样式</h2>
+        <h2>字幕样式</h2>
         <button class="mini" type="button" id="btnResetStyle">重置当前样式</button>
       </div>
       <div class="row">
@@ -506,7 +506,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       <p class="hint">选择视频帧查看字幕效果。高亮为样式示意，实际演唱时间以生成结果为准。</p>
     </div>
     <div class="card generation-card" id="generationCard">
-      <h2><span class="n">3</span>生成与复核 <span class="card-caption">处理将在后台队列继续</span></h2>
+      <h2>生成与预览 <span class="card-caption">处理将在后台队列继续</span></h2>
       <label class="fl" for="outputMode">字幕输出方式</label>
       <select id="outputMode">
         <option value="burn">烧录硬字幕 · MP4（投稿、直接观看）</option>
@@ -568,7 +568,7 @@ tr.anchor-candidate td:first-child{box-shadow:inset 3px 0 var(--warn);color:var(
       </div>
 
       <div class="card hidden" id="tuneCard">
-      <h2><span class="n">4</span>人工微调对齐<span class="spacer"></span>
+      <h2>人工微调对齐<span class="spacer"></span>
         <span class="badge" id="healthBadge">待检查</span></h2>
       <p class="hint">给某一行填「偏移 ms」即可整体平移该行（正数延后、负数提前）；
         点 <b>▶</b> 可把播放器跳到该行起点试听。每行的 ⚓ 可独立开关，也可以同时选择多个锚点；修改时间或偏移会自动把该句加入锚点。

@@ -11,6 +11,29 @@ const badge = grade => `<span class="badge ${esc(grade)}">${esc(gradeNames[grade
 const fullFiles = track => [...track.files, ...track.supporting, ...(track.experiment?.files || [])];
 const availableFiles = track => track.files.filter(f=>f.exists);
 const isCandidate = track => track.grade==='high' && track.human_review.status!=='needs_changes' && !track.human_review.stale && !track.human_review.new_version && track.files.some(f=>f.kind==='reviewed' && f.variant===3 && f.exists);
+function publishEligibility(track) {
+  const review = track?.human_review || {};
+  const file = (track?.files || []).find(f => f.id === review.file_id);
+  if (review.status !== 'passed') return {ok: false, reason: '需要先在人工复核中通过这首歌'};
+  if (review.stale || review.new_version) return {ok: false, reason: '审批版本已变化，需要重新复核'};
+  if (!file || !file.exists) return {ok: false, reason: '审批的视频文件不可用'};
+  if (file.signature !== review.file_signature) return {ok: false, reason: '视频签名已变化，需要重新复核'};
+  return {ok: true, reason: ''};
+}
+function updatePublishAction() {
+  const button = $('publishSelected'), hint = $('publishHint');
+  if (!button || !selectedTrack) return;
+  const state = publishEligibility(selectedTrack);
+  button.disabled = !state.ok;
+  hint.textContent = state.ok ? '已审批：可直接生成 B站/抖音投稿包' : state.reason;
+}
+function publishSelectedTrack() {
+  if (!selectedTrack) return;
+  const state = publishEligibility(selectedTrack);
+  if (!state.ok) return toast(state.reason, true);
+  const file = selectedTrack.files.find(f => f.id === selectedTrack.human_review.file_id);
+  reviewNavigate('publish', {track_id: selectedTrack.id, file_id: file.id, title: selectedTrack.title});
+}
 const isMP4 = file => file?.name.toLowerCase().endsWith('.mp4');
 const distinctFiles = files => [...new Map(files.map(f=>[f.path,f])).values()];
 function trackSelection(file) {
@@ -109,7 +132,7 @@ async function load() {
       if(library.tracks.some(t=>t.id===id))openTrack(id);
     }
   } catch(error) {
-    $('loadError').textContent=`无法读取成品库：${error.message} 请从项目工作台的“成品与人工复核”标签打开，而不是双击 HTML 文件。`;
+    $('loadError').textContent=`无法读取成品库：${error.message} 请从项目工作台的“成品复核”标签打开，而不是双击 HTML 文件。`;
     $('loadError').hidden=false;$('resultCount').textContent=library?'保留上次清单':'清单加载失败';
   } finally {$('refresh').disabled=false;}
 }
@@ -203,6 +226,7 @@ function selectFile(id, preservePosition=true) {
   $('editSelected').disabled=!workflow.editable||file.kind==='experiment';
   $('sourceSelected').disabled=!workflow.source&&!workflow.concert_id;
   $('workflowHint').textContent=selectedTrack.native?'继续编辑会打开此项目版本；复核记录保留在成品库。':workflow.editable?'修改原文字幕会建立独立工作区，沿用此版本的时间轴与原唱素材；现有成品和审批记录保留。':'此版本没有可继续编辑的对齐数据。';
+  updatePublishAction();
 }
 async function reveal(id, button) {
   if(!library)return;
@@ -268,6 +292,7 @@ $('sourceSelected').onclick=()=>{
   const excerptStart=selectedFile.kind==='experiment'?(selectedTrack.experiment?.start||0):0;
   reviewNavigate('concert',{source:context.source,concert_id:context.concert_id,time:(context.source_start||0)+excerptStart+elapsed,title:selectedTrack.title});
 };
+$('publishSelected').onclick=()=>publishSelectedTrack();
 window.addEventListener('message',async event=>{
   if(event.origin!==location.origin||event.source!==window.parent)return;
   if(event.data?.type==='lets-karaoke:ping'){window.parent.postMessage({type:'lets-karaoke:ready'},location.origin);return;}

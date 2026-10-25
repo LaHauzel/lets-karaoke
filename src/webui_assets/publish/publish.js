@@ -14,6 +14,7 @@
   const state = {
     library: null, token: '', track: null, platform: 'bilibili', settings: null,
     plan: null, job: null, saveTimer: null, pollTimer: null, busy: false,
+    requestedTrackId: null,
   };
 
   function esc(value) {
@@ -100,7 +101,9 @@
         $('contentWarning').hidden = false;
       }
       const previous = keepSelection && state.track ? state.track.id : null;
-      const selected = (previous && libraryTrack(previous)) || data.tracks[0] || null;
+      const requested = state.requestedTrackId;
+      state.requestedTrackId = null;
+      const selected = (requested && libraryTrack(requested)) || (previous && libraryTrack(previous)) || data.tracks[0] || null;
       state.track = selected;
       renderCandidates();
       if (!data.tracks.length) {
@@ -110,6 +113,10 @@
       }
       $('candidateEmpty').hidden = true;
       selectTrack(selected.id);
+      if (requested) {
+        if (selected && selected.id === requested) showContext(selected.title);
+        else toast('这条曲目当前不在可发布列表，请回到成品复核确认已通过且文件未变化', true);
+      }
     } catch (error) {
       $('loadError').textContent = error.message;
       $('loadError').hidden = false;
@@ -137,6 +144,7 @@
   function selectTrack(id) {
     const track = libraryTrack(id);
     if (!track) return;
+    $('contextHint').hidden = true;
     state.track = track;
     state.settings = structuredClone(track.settings || {});
     state.platform = 'bilibili';
@@ -299,6 +307,12 @@
         ${warnings ? `<ul class="issue-list warn-list">${warnings}</ul>` : ''}</div>`);
     }
     $('preflightBody').innerHTML = chunks.join('');
+  }
+
+  function showContext(title) {
+    const node = $('contextHint');
+    node.textContent = `来自成品复核：${title} · 文件签名有效`;
+    node.hidden = false;
   }
 
   function setBusy(busy) {
@@ -567,9 +581,11 @@
         window.parent.postMessage({type: 'lets-karaoke:ready'}, location.origin);
         return;
       }
-      if (data.type === 'lets-karaoke:context' && data.track_id && state.library) {
+      if (data.type === 'lets-karaoke:context' && data.track_id) {
+        if (!state.library) { state.requestedTrackId = data.track_id; return; }
         const match = state.library.tracks.find(track => track.id === data.track_id || track.track === data.track_id);
-        if (match) selectTrack(match.id);
+        if (match) { selectTrack(match.id); showContext(match.title); }
+        else toast('这条曲目当前不在可发布列表，请回到成品复核确认已通过且文件未变化', true);
       }
     });
     window.parent.postMessage({type: 'lets-karaoke:ready'}, location.origin);

@@ -157,6 +157,7 @@ async function saveHumanReview(){
     if(reviewEditor.base.revision)selectedTrack.review_history=[...(selectedTrack.review_history||[]),structuredClone(reviewEditor.base)];
     selectedTrack.human_review={...result.review,stale:false,new_version:!!(selectedTrack.revision&&savedFile?.revision!==selectedTrack.revision.revision)};
     openHumanReview(selectedTrack);renderReviewCounts();renderTracks();
+    if(typeof updatePublishAction==='function')updatePublishAction();
     $('acceptanceStatus').textContent=`人工复核：${reviewNames[result.review.status]}。自动验收：${selectedTrack.acceptance.label}。`;
     toast('人工复核记录已保存到本地。');return true;
   }catch(error){
