@@ -3,7 +3,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 function workspace(){
   const nodes={},listeners={},posted={};
-  for(const name of ['karaoke','concert','review']){
+  for(const name of ['karaoke','concert','review','publish']){
     posted[name]=[];
     nodes['panel-'+name]={hidden:name!=='karaoke',attributes:{src:name==='karaoke'?'/karaoke':''},
       contentWindow:{postMessage:data=>posted[name].push(data)},
@@ -36,6 +36,14 @@ function workspace(){
   assert.equal(w.history.value,'#review');assert.equal(w.nodes['panel-review'].hidden,false);
   w.send('review',{type:'lets-karaoke:ready'});
   assert.deepEqual(JSON.parse(JSON.stringify(w.posted.review.at(-1))),{type:'lets-karaoke:context',track_id:'native/song'});
+}
+{
+  const w=workspace();
+  w.send('review',{type:'lets-karaoke:navigate',tab:'publish',context:{track_id:'native/song'}});
+  assert.equal(w.history.value,'#publish');assert.equal(w.nodes['panel-publish'].hidden,false);
+  assert.equal(w.nodes['panel-review'].hidden,true);
+  w.send('publish',{type:'lets-karaoke:ready'});
+  assert.deepEqual(JSON.parse(JSON.stringify(w.posted.publish.at(-1))),{type:'lets-karaoke:context',track_id:'native/song'});
 }
 {
   const w=workspace();w.send('karaoke',{type:'lets-karaoke:ready'});

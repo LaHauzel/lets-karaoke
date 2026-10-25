@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>发布准备 · lets-karaoke</title>
+<link rel="stylesheet" href="/theme.css">
+<link rel="stylesheet" href="/publish-assets/publish.css">
+<script src="/workflow.js" defer></script>
+<script src="/publish-assets/publish.js" defer></script>
+</head>
+<body>
+<main class="publish-page">
+  <header class="page-header">
+    <div>
+      <div class="eyebrow">04 · 投稿包</div>
+      <h1>发布准备</h1>
+      <p class="intro">从人工审批通过的成品生成 B站 / 抖音 投稿包。不会登录平台账号，也不会自动上传。</p>
+    </div>
+    <div class="header-actions"><button id="refresh" type="button">刷新清单</button><span id="updated" class="muted small"></span></div>
+  </header>
+  <nav class="lk-workflow" aria-label="制作流程" data-workflow="publish"></nav>
+  <p id="contentWarning" class="content-warning" hidden></p>
+  <div id="loadError" class="error" role="alert" hidden></div>
+  <div class="publish-grid">
+    <aside class="panel candidates">
+      <div class="panel-head"><h2>已审批曲目</h2><span id="candidateCount" class="muted small"></span></div>
+      <p class="muted small">只列出成品复核中“通过”、且文件签名未变化的曲目。</p>
+      <div id="candidateList" class="candidate-list" role="list"></div>
+      <div id="candidateEmpty" class="empty" hidden>还没有可发布的曲目。先到「成品复核」通过一首歌。</div>
+    </aside>
+    <section class="panel editor" id="editor" hidden>
+      <div class="editor-head">
+        <div><div id="trackConcert" class="eyebrow"></div><h2 id="trackTitle"></h2></div>
+        <span id="approvalBadge" class="badge"></span>
+      </div>
+      <div class="source-card">
+        <div><strong>审批视频</strong><p id="sourcePath" class="path"></p></div>
+        <button id="copySource" type="button" class="text-button">复制路径</button>
+      </div>
+
+      <section class="options">
+        <div class="section-title"><h3>打包选项</h3><span class="muted small">只影响投稿包，不改动成品</span></div>
+        <div class="option-grid">
+          <label>音轨<select id="optAudio"><option value="original">原唱</option><option value="accompaniment">伴奏</option></select></label>
+          <label>字幕<select id="optSubtitle"><option value="burn">烧录字幕</option><option value="none">不烧录</option></select></label>
+          <label id="subtitleLanguageLabel">字幕语言<select id="optSubtitleLanguage"><option value="original">原文</option><option value="bilingual">双语</option></select></label>
+          <label>视频输出<select id="optVideoMode"><option value="transcode">重新编码（推荐）</option><option value="copy">直接复制（仅源 MP4）</option></select></label>
+          <label id="framingLabel">画面适配<select id="optFraming"><option value="source">保持原画面</option><option value="vertical_blur">竖屏模糊背景</option></select></label>
+          <label>封面时间（秒）<input id="optCoverTime" type="number" min="0" step="0.1"></label>
+        </div>
+        <p id="optionNote" class="muted small"></p>
+      </section>
+
+      <section class="platform-section">
+        <div class="section-title"><h3>平台信息</h3><span id="saveState" class="muted small"></span></div>
+        <div class="platform-tabs" role="tablist" aria-label="发布平台">
+          <button type="button" data-platform="bilibili" aria-selected="true">B站</button>
+          <button type="button" data-platform="douyin" aria-selected="false">抖音</button>
+        </div>
+        <label class="platform-enabled"><input id="platformEnabled" type="checkbox"> 本次生成包含此平台</label>
+        <div id="platformForm" class="platform-form"></div>
+      </section>
+
+      <section class="actions">
+        <button id="preflight" type="button">预检</button>
+        <button id="generate" type="button" class="primary">生成投稿包</button>
+        <button id="cancel" type="button" class="danger" hidden>取消生成</button>
+        <span id="jobState" role="status" class="muted small"></span>
+        <div class="progress" id="progressWrap" hidden><div id="progressBar"></div></div>
+      </section>
+
+      <section id="preflightSection" class="detail-section" hidden>
+        <div class="section-title"><h3>预检结果</h3><span id="preflightState" class="muted small"></span></div>
+        <div id="preflightBody"></div>
+      </section>
+
+      <section id="resultsSection" class="detail-section" hidden>
+        <div class="section-title"><h3>投稿包</h3><span class="muted small">生成后手动上传；标记提交只记录在本机</span></div>
+        <div id="resultsBody"></div>
+      </section>
+
+      <section id="historySection" class="detail-section" hidden>
+        <div class="section-title"><h3>发布记录</h3></div>
+        <div id="historyBody"></div>
+      </section>
+    </section>
+  </div>
+  <footer class="publish-footer">
+    <p>本页不会登录 B站/抖音，也不会自动上传；文件保存在本地 <code>out/publish/</code>。发布前请确认音频、画面和歌词均有授权。</p>
+    <nav><a href="https://member.bilibili.com/platform/upload/video/frame" target="_blank" rel="noopener">B站创作中心 ↗</a><a href="https://creator.douyin.com/creator-micro/content/upload" target="_blank" rel="noopener">抖音创作者中心 ↗</a></nav>
+  </footer>
+</main>
+<div id="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>

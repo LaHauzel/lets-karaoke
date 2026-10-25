@@ -1,4 +1,4 @@
-﻿"""本地 WebUI —— 上传 → 生成卡拉OK → 微调 → 导出
+"""本地 WebUI —— 上传 → 生成卡拉OK → 微调 → 导出
 
 运行环境：系统默认 Python 3.11+。WebUI 使用标准库 HTTP 服务。
 
@@ -1302,6 +1302,9 @@ class Handler(BaseHTTPRequestHandler):
             if u.path == '/review' or u.path.startswith(('/api/review/', '/review-assets/', '/review-exports/', '/review-native/')):
                 from review_web import dispatch_get
                 return dispatch_get(self, u.path)
+            if u.path == '/publish' or u.path.startswith(('/api/publish/', '/publish-assets/', '/publish-files/')):
+                from publish_web import dispatch_get
+                return dispatch_get(self, u.path, q)
             if u.path.startswith('/api/concert/') or u.path.startswith('/concert-files/'):
                 from concert_web import dispatch_get
                 return dispatch_get(self, u.path, q)
@@ -1404,6 +1407,9 @@ class Handler(BaseHTTPRequestHandler):
                 return reject_post(self, {'error':'请求类型不正确'},415)
             if u.path.startswith('/api/review/'):
                 from review_web import dispatch_post
+                return dispatch_post(self, u.path)
+            if u.path.startswith('/api/publish/'):
+                from publish_web import dispatch_post
                 return dispatch_post(self, u.path)
             if u.path.startswith('/api/concert/'):
                 from concert_web import dispatch_post

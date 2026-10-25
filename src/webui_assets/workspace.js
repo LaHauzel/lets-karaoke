@@ -1,4 +1,4 @@
-const tabs=['karaoke','concert','review'];
+const tabs=['karaoke','concert','review','publish'];
 const frames=Object.fromEntries(tabs.map(n=>[n,document.getElementById('panel-'+n)]));
 const ready={},pending={};
 function selectTab(name){

@@ -1,6 +1,6 @@
 /* Shared navigation. Context transfers are routed by the same-origin workspace. */
 (() => {
-  const names = [['concert','01','切割整场'],['karaoke','02','制作字幕'],['review','03','成品复核']];
+  const names = [['concert','01','切割整场'],['karaoke','02','制作字幕'],['review','03','成品复核'],['publish','04','发布准备']];
   window.navigateWorkspace = (tab, context={}) => {
     if (!names.some(row=>row[0]===tab)) return;
     if (window.parent === window) {
