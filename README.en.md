@@ -18,7 +18,10 @@ A local-first toolkit for lyric alignment, karaoke subtitle rendering, and conce
 - Alignment diagnostics, low-confidence markers, anchor editing, version history, and fast re-rendering.
 - Structural acceptance checks flag missing lyrics, lines that flash past, and invalid word timings; batch results summarize items needing correction or review.
 - Per-line subtitle positioning, adjustable line count, fonts, sizes, and highlight colors, with a live preview on any frame of the selected video.
-- Enhanced LRC, SRT, and ASS output, with optional FFmpeg subtitle burn-in.
+- Enhanced LRC, SRT, and ASS output; choose a burned-in MP4 or an MKV with an embedded ASS subtitle track. Timeline edits can retain or switch the output format.
+- Bilingual repair deliveries can combine two audio tracks and two ASS subtitle tracks in one MKV, with separate review identities for track selections.
+- A delivery review workspace for previewing versions, recording lyric issues and timestamps, and saving approvals bound to the specific file signature.
+- A publish preparation workspace that generates local Bilibili/Douyin packages from approved deliveries, including video, cover, metadata, and file hashes.
 - Acoustic boundary suggestions for long concert videos based on volume dips and spectral changes, with YAMNet and WebRTC VAD speech/music review markers. Markers never cut media automatically and may still flag singing or crowd interaction.
 - Interactive waveform and time-table editing: seek, drag boundaries, snap the nearest boundary to the current time, split at the playhead, merge adjacent segments, and edit timestamps.
 - Multiple sensitivity versions per concert record, with batch export to MKV or MP4.
@@ -52,7 +55,7 @@ python src\check_environment.py
 
 ## Installation
 
-By default, batch scripts install into the Python 3.11 executable resolved from the current shell. An isolated environment is also available and does not depend on ComfyUI:
+Batch scripts prefer an existing project `.venv`; otherwise they use Python 3.11 from the current shell and install dependencies into that interpreter. Creating an isolated environment first is recommended and does not depend on ComfyUI:
 
 ```bat
 setup_venv.bat whisper
@@ -224,13 +227,13 @@ None of these steps approves a release or replaces listening to the result.
 
 ## Publish preparation (multi-platform packages)
 
-The fourth workspace tab, `/publish` (or `/publish` in the workspace), turns a human-approved video into a local submission package for Bilibili and Douyin. It never logs in, never uploads, and never changes the approved source:
+The fourth workspace tab, "Publish preparation" (`/#publish` or `/publish`), turns a human-approved video into a local submission package for Bilibili and Douyin. It never logs in, never uploads, and never changes the approved source:
 
 - Packages contain `video.mp4`, `cover.jpg`, `publish.json` (all platform fields, source approval and SHA-256), `upload-info.txt` for copy/paste, and `sha256.txt`, under `out/publish/`.
 - Only tracks approved in the review workspace, with a matching file signature, are eligible; options include original/accompaniment audio, burned or no subtitles, transcode or copy (MP4 sources), cover time, and a vertical blurred-background framing for Douyin.
 - Platform fields cover Bilibili (title, description, tags, partition tid, copyright/reprint, scheduled publish, 1146×717 cover) and Douyin (title, caption, topics, visibility, downloads, location, collection, mentions, scheduled publish, original claim, 1080×1440 cover).
 - A preflight checks approval signatures, audio/subtitle availability, field limits and platform video limits before any FFmpeg work; generation runs in a cancellable background job and can be marked as submitted locally.
-- Automatic upload is deliberately out of scope: Bilibili's official upload API requires an enterprise developer account (individual applications are not open), and Douyin follows its own open-platform approval process.
+- This version does not implement platform account authorization or official upload APIs. Upload the generated package through the platform's submission page. Check the latest official eligibility and permission requirements before implementing an integration; a successful local preflight is not platform approval.
 
 ## Project layout
 
@@ -245,7 +248,9 @@ src/
   multitrack.py         lossless multi-track MKV muxing and packet/timeline checks
   archive_library.py    storage migration plans; never deletes originals
   feedback_revision.py  version-bound review decisions and local CLI
-  webui_assets/         karaoke, concert, and review tab assets
+  publish_export.py     local submission packages, covers, metadata, and file hashes
+  publish_web.py        publish workspace routes, preflight, and background generation
+  webui_assets/         karaoke, concert, review, and publish tab assets
 tests/                  unit and HTTP regression tests
 data/synth/             synthetic test media and manifests
 tools/SOFA/             optional singing alignment backend
